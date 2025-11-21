@@ -1,0 +1,94 @@
+package net.runelite.client.plugins.pluginhub.com.tickcounter;
+
+import java.awt.Dimension;
+import java.awt.Graphics2D;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map.Entry;
+import javax.inject.Inject;
+import net.runelite.api.Client;
+import net.runelite.api.MenuAction;
+import net.runelite.client.ui.overlay.OverlayPanel;
+import net.runelite.client.ui.overlay.OverlayPosition;
+import net.runelite.client.ui.overlay.OverlayMenuEntry;
+import net.runelite.client.ui.overlay.components.LayoutableRenderableEntity;
+import net.runelite.client.ui.overlay.components.LineComponent;
+import net.runelite.client.ui.overlay.components.TitleComponent;
+
+public class TickCounterOverlay extends OverlayPanel
+{
+
+	private TickCounterPlugin plugin;
+	private TickCounterConfig config;
+	private Client client;
+
+	@Inject
+	public TickCounterOverlay(TickCounterPlugin plugin,Client client,TickCounterConfig config)
+	{
+		super(plugin);
+		setPosition(OverlayPosition.DYNAMIC);
+		setPosition(OverlayPosition.DETACHED);
+		setPosition(OverlayPosition.BOTTOM_RIGHT);
+		this.plugin = plugin;
+		this.client = client;
+		this.config = config;
+		getMenuEntries().add(new OverlayMenuEntry(MenuAction.RUNELITE_OVERLAY, "Reset", "Tick counter"));
+	}
+
+	@Override
+	public Dimension render(Graphics2D g)
+	{
+		List<LayoutableRenderableEntity> elems = panelComponent.getChildren();
+		elems.clear();
+		List<Entry<String, Integer>> list = new ArrayList<>(plugin.activity.entrySet());
+		list.sort(new Comparator<Entry<String, Integer>>()
+		{
+			@Override
+			public int compare(Entry<String, Integer> o1, Entry<String, Integer> o2)
+			{
+				int value = -Integer.compare(o1.getValue(), o2.getValue());
+				if (value == 0)
+					value = o1.getKey().compareTo(o2.getKey());
+				return value;
+			}
+		});
+		if (list.size() != 0 && config.titleEnabled()) elems.add(TitleComponent.builder().text("Tick counter").color(config.titleColor()).build());
+		int total = 0;
+		int includedPlayers = 0;
+		final int maxPlayers = config.maxPlayers();
+		for (Entry<String, Integer> e : list)
+		{
+			boolean isLocalPlayer = e.getKey().equals(client.getLocalPlayer().getName());
+			total += e.getValue();
+			if (maxPlayers == 0 || includedPlayers < maxPlayers || isLocalPlayer)
+			{
+				includedPlayers++;
+				LineComponent.LineComponentBuilder lineBuilder = LineComponent.builder().left(e.getKey()).right(e.getValue().toString());
+
+				if (isLocalPlayer)
+				{
+					lineBuilder.leftColor(config.selfColor()).rightColor(config.selfColor());
+				}
+				else
+				{
+					lineBuilder.leftColor(config.otherColor()).rightColor(config.otherColor());
+				}
+
+				elems.add(lineBuilder.build());
+			}
+		}
+
+		// the local player might be outside top `maxPlayers`, and we have exceeded the cap and need to remove the 2nd-to-last entry
+		if (includedPlayers > maxPlayers)
+		{
+			elems.remove(elems.size() - 2);
+		}
+
+		if (config.totalEnabled())
+		{
+			if (list.size() != 0) elems.add(LineComponent.builder().left("Total").leftColor(config.totalColor()).rightColor(config.totalColor()).right(String.valueOf(total)).build());
+		}
+		return super.render(g);
+	}
+}

@@ -1,0 +1,57 @@
+package net.runelite.client.plugins.pluginhub.com.toofifty.easyblastfurnace.overlays;
+
+import com.google.inject.Inject;
+import com.google.inject.Singleton;
+import net.runelite.client.plugins.pluginhub.com.toofifty.easyblastfurnace.EasyBlastFurnaceConfig;
+import net.runelite.client.plugins.pluginhub.com.toofifty.easyblastfurnace.EasyBlastFurnacePlugin;
+import net.runelite.client.plugins.pluginhub.com.toofifty.easyblastfurnace.state.BlastFurnaceState;
+import net.runelite.api.gameval.ItemID;
+import net.runelite.api.widgets.WidgetItem;
+import net.runelite.client.ui.overlay.WidgetItemOverlay;
+import net.runelite.client.ui.overlay.components.TextComponent;
+
+import java.awt.*;
+
+@Singleton
+public class CoalBagOverlay extends WidgetItemOverlay
+{
+    @Inject
+    private EasyBlastFurnacePlugin plugin;
+
+    @Inject
+    private EasyBlastFurnaceConfig config;
+
+    @Inject
+    private BlastFurnaceState state;
+
+    CoalBagOverlay()
+    {
+        showOnInventory();
+    }
+
+    @Override
+    public void renderItemOverlay(Graphics2D graphics, int itemId, WidgetItem widgetItem)
+    {
+        if (!plugin.isEnabled()) return;
+        if (!(itemId == ItemID.COAL_BAG ||
+			itemId == ItemID.COAL_BAG_DUMMY ||
+			itemId == ItemID.COAL_BAG_OPEN))
+            return;
+        if (!config.showCoalBagOverlay()) return;
+
+        Color color = config.coalBagOverlayColor();
+
+        Rectangle bounds = widgetItem.getCanvasBounds();
+        TextComponent textComponent = new TextComponent();
+
+        textComponent.setPosition(new Point(bounds.x - 1, bounds.y + 8));
+        if (state.getCoalBag().isFull()) {
+            textComponent.setColor(Color.red);
+        } else {
+            textComponent.setColor(color);
+        }
+        textComponent.setText(Integer.toString(state.getCoalBag().getCoal()));
+
+        textComponent.render(graphics);
+    }
+}

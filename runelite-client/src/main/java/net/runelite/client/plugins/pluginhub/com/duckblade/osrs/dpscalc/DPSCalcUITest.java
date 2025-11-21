@@ -1,0 +1,80 @@
+package net.runelite.client.plugins.pluginhub.com.duckblade.osrs.dpscalc;
+
+import net.runelite.client.plugins.pluginhub.com.duckblade.osrs.dpscalc.calc.DpsComputeModule;
+import net.runelite.client.plugins.pluginhub.com.duckblade.osrs.dpscalc.devbindings.LocalItemStatsProvider;
+import net.runelite.client.plugins.pluginhub.com.duckblade.osrs.dpscalc.devbindings.LocalNpcDataProvider;
+import net.runelite.client.plugins.pluginhub.com.duckblade.osrs.dpscalc.devbindings.MockClientDataProvider;
+import net.runelite.client.plugins.pluginhub.com.duckblade.osrs.dpscalc.plugin.config.DpsCalcConfig;
+import net.runelite.client.plugins.pluginhub.com.duckblade.osrs.dpscalc.plugin.live.party.PartyDpsService;
+import net.runelite.client.plugins.pluginhub.com.duckblade.osrs.dpscalc.plugin.module.DpsPluginModule;
+import net.runelite.client.plugins.pluginhub.com.duckblade.osrs.dpscalc.plugin.osdata.clientdata.ClientDataProvider;
+import net.runelite.client.plugins.pluginhub.com.duckblade.osrs.dpscalc.plugin.osdata.clientdata.ClientDataProviderThreadProxy;
+import net.runelite.client.plugins.pluginhub.com.duckblade.osrs.dpscalc.plugin.osdata.wiki.ItemStatsProvider;
+import net.runelite.client.plugins.pluginhub.com.duckblade.osrs.dpscalc.plugin.osdata.wiki.NpcDataProvider;
+import net.runelite.client.plugins.pluginhub.com.duckblade.osrs.dpscalc.plugin.live.overlay.LiveDpsOverlay;
+import net.runelite.client.plugins.pluginhub.com.duckblade.osrs.dpscalc.plugin.ui.DpsPluginPanel;
+import com.google.inject.Guice;
+import com.google.inject.Injector;
+import com.google.inject.util.Modules;
+import com.google.inject.util.Providers;
+import java.awt.Cursor;
+import java.io.File;
+import java.lang.reflect.InvocationTargetException;
+import javax.swing.JFrame;
+import javax.swing.SwingUtilities;
+import javax.swing.WindowConstants;
+import net.runelite.api.Client;
+import net.runelite.client.RuneLite;
+import net.runelite.client.callback.ClientThread;
+import net.runelite.client.game.ItemManager;
+import okhttp3.Cache;
+import okhttp3.OkHttpClient;
+
+public class DPSCalcUITest
+{
+
+	public static void main(String[] args) throws InterruptedException, InvocationTargetException
+	{
+		Injector testInjector = Guice.createInjector(
+			Modules.override(new DpsComputeModule(), new DpsPluginModule())
+				.with(i ->
+				{
+					i.bind(Client.class).toProvider(Providers.of(null));
+					i.bind(ItemManager.class).toProvider(Providers.of(null));
+					i.bind(ClientThread.class).toProvider(Providers.of(null));
+					i.bind(OkHttpClient.class).toInstance(new OkHttpClient.Builder()
+						.cache(new Cache(new File(RuneLite.CACHE_DIR, "okhttp"), 20 * 1024 * 1024))
+						.build());
+					i.bind(DpsCalcConfig.class).toInstance(new DpsCalcConfig()
+					{
+					});
+
+					i.bind(ItemStatsProvider.class).to(LocalItemStatsProvider.class).asEagerSingleton();
+					i.bind(NpcDataProvider.class).to(LocalNpcDataProvider.class).asEagerSingleton();
+					i.bind(ClientDataProvider.class).to(MockClientDataProvider.class).asEagerSingleton();
+					i.bind(ClientDataProviderThreadProxy.class).to(MockClientDataProvider.MockClientDataProviderThreadProxy.class);
+					i.bind(LiveDpsOverlay.class).toProvider(Providers.of(null));
+					i.bind(PartyDpsService.class).toProvider(Providers.of(null));
+				})
+		);
+
+		SwingUtilities.invokeAndWait(() ->
+		{
+			// roughly copied from RuneLite's ClientUI.java init()
+			// todo?
+//			SwingUtil.setupDefaults();
+//			SwingUtil.setTheme(new SubstanceRuneLiteLookAndFeel());
+//			SwingUtil.setFont(FontManager.getRunescapeFont());
+
+			JFrame frame = new JFrame();
+			frame.getLayeredPane().setCursor(Cursor.getDefaultCursor());
+			frame.add(testInjector.getInstance(DpsPluginPanel.class));
+
+			frame.setSize(242, 800);
+			frame.setResizable(false);
+			frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
+			frame.setVisible(true);
+		});
+	}
+
+}

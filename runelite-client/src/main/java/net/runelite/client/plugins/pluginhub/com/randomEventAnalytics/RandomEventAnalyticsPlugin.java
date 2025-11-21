@@ -1,0 +1,406 @@
+package net.runelite.client.plugins.pluginhub.com.randomEventAnalytics;
+
+import com.google.inject.Provides;
+import net.runelite.client.plugins.pluginhub.com.randomEventAnalytics.localstorage.NpcInfoRecord;
+import net.runelite.client.plugins.pluginhub.com.randomEventAnalytics.localstorage.PlayerInfoRecord;
+import net.runelite.client.plugins.pluginhub.com.randomEventAnalytics.localstorage.RandomEventAnalyticsLocalStorage;
+import net.runelite.client.plugins.pluginhub.com.randomEventAnalytics.localstorage.RandomEventRecord;
+import net.runelite.client.plugins.pluginhub.com.randomEventAnalytics.localstorage.XpInfoRecord;
+import java.awt.image.BufferedImage;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import javax.inject.Inject;
+import javax.swing.SwingUtilities;
+import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.Actor;
+import net.runelite.api.ChatMessageType;
+import net.runelite.api.Client;
+import net.runelite.api.GameState;
+import net.runelite.api.NPC;
+import net.runelite.api.NpcID;
+import net.runelite.api.Player;
+import net.runelite.api.events.ChatMessage;
+import net.runelite.api.events.GameStateChanged;
+import net.runelite.api.events.GameTick;
+import net.runelite.api.events.InteractingChanged;
+import net.runelite.api.events.NpcSpawned;
+import net.runelite.client.Notifier;
+import net.runelite.client.chat.ChatMessageManager;
+import net.runelite.client.chat.QueuedMessage;
+import net.runelite.client.config.ConfigManager;
+import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.events.ClientShutdown;
+import net.runelite.client.events.ConfigChanged;
+import net.runelite.client.plugins.Plugin;
+import net.runelite.client.plugins.PluginDependency;
+import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.plugins.xptracker.XpTrackerPlugin;
+import net.runelite.client.plugins.xptracker.XpTrackerService;
+import net.runelite.client.task.Schedule;
+import net.runelite.client.ui.ClientToolbar;
+import net.runelite.client.ui.NavigationButton;
+import net.runelite.client.ui.overlay.OverlayManager;
+import net.runelite.client.util.ImageUtil;
+import net.runelite.client.util.Text;
+
+@Slf4j
+@PluginDescriptor(name = "Random Event Analytics")
+@PluginDependency(XpTrackerPlugin.class)
+public class RandomEventAnalyticsPlugin extends Plugin
+{
+	private static final int RANDOM_EVENT_TIMEOUT = 150;
+	private static final int STRANGE_PLANT_SPAWN_RADIUS = 1;
+	private static final String PLANT_SPAWNED_NOTIFICATION_MESSAGE =
+		"A Strange Plant has spawned, please click the plant to determine eligibility.";
+	@Inject
+	private ConfigManager configManager;
+	@Inject
+	private OverlayManager overlayManager;
+	@Inject
+	private RandomEventAnalyticsOverlay overlay;
+	@Inject
+	private Client client;
+	@Inject
+	private RandomEventAnalyticsConfig config;
+	@Inject
+	private RandomEventAnalyticsLocalStorage localStorage;
+	@Inject
+	private TimeTracking timeTracking;
+	@Inject
+	private ClientToolbar clientToolbar;
+	@Inject
+	private ChatMessageManager chatMessageManager;
+	@Inject
+	private Notifier notifier;
+	@Inject
+	private XpTrackerService xpTrackerService;
+
+	@Setter
+	private RandomEventAnalyticsPanel panel;
+	private String profile;
+	private int lastNotificationTick = -RANDOM_EVENT_TIMEOUT;
+	private NavigationButton navButton;
+	private RandomEventRecord unconfirmedStrangePlantRecord;
+
+	@Provides
+	RandomEventAnalyticsConfig provideConfig(ConfigManager configManager)
+	{
+		return configManager.getConfig(RandomEventAnalyticsConfig.class);
+	}
+
+	@Override
+	protected void startUp() throws Exception
+	{
+		overlayManager.add(overlay);
+		panel = injector.getInstance(RandomEventAnalyticsPanel.class);
+		final BufferedImage icon = ImageUtil.loadImageResource(getClass(), "random_event_analytics.png");
+
+		navButton =
+			NavigationButton.builder().tooltip("Random Event Analytics").icon(icon).panel(panel).priority(7).build();
+
+		clientToolbar.addNavigation(navButton);
+
+		if (!this.isLoggedIn())
+		{
+			return;
+		}
+		this.loadConfig();
+		loadPreviousRandomEvents();
+	}
+
+	@Override
+	protected void shutDown()
+	{
+		persistTimeTrackingConfig();
+		lastNotificationTick = 0;
+		clientToolbar.removeNavigation(navButton);
+		overlayManager.remove(overlay);
+	}
+
+	private boolean isLoggedIn()
+	{
+		return client.getAccountHash() != -1;
+	}
+
+	private void loadConfig()
+	{
+		profile = configManager.getRSProfileKey();
+		timeTracking.init(
+			Instant.now(),
+			getLastRandomSpawnInstant()
+		);
+	}
+
+	@Subscribe
+	public void onConfigChanged(ConfigChanged configChanged)
+	{
+		if (!configChanged.getGroup().equals(RandomEventAnalyticsConfig.CONFIG_GROUP))
+		{
+			return;
+		}
+
+		panel.updateConfig();
+		if (configChanged.getKey().equals("logTimeFormat")) {
+			SwingUtilities.invokeLater(panel::updateAllRandomEventBoxes);
+		}
+	}
+
+	@Subscribe
+	public void onClientShutdown(ClientShutdown event)
+	{
+		persistTimeTrackingConfig();
+	}
+
+
+	@Subscribe
+	public void onGameStateChanged(GameStateChanged gameStateChanged)
+	{
+
+		GameState state = gameStateChanged.getGameState();
+		// TODO: Update timeTracking loginTime when relogging.
+		if (state == GameState.LOGGED_IN)
+		{
+			if (timeTracking.getLoginTime() == null)
+			{
+				timeTracking.setLoginTime(Instant.now());
+			}
+
+			final long hash = client.getAccountHash();
+			if (String.valueOf(hash).equalsIgnoreCase(localStorage.getUsername()))
+			{
+				return;
+			}
+
+			String username = client.getUsername();
+			if (username != null && username.length() > 0)
+			{
+				localStorage.renameUsernameFolderToAccountHash(username, hash);
+			}
+
+			if (localStorage.setPlayerUsername(String.valueOf(hash)))
+			{
+				this.loadConfig();
+				loadPreviousRandomEvents();
+			}
+		}
+		else if (state == GameState.CONNECTION_LOST || state == GameState.UNKNOWN)
+		{
+			persistTimeTrackingConfig();
+		}
+		else if (state == GameState.HOPPING)
+		{
+			persistTimeTrackingConfig();
+			timeTracking.setLoginTime(null);
+		}
+		else if (state == GameState.LOGIN_SCREEN)
+		{
+			persistTimeTrackingConfig();
+			timeTracking.setLoginTime(null);
+			panel.updateEstimation();
+		}
+	}
+
+	private Instant getLastRandomSpawnInstant()
+	{
+		Instant spawned = getInstantFromProfileConfig(RandomEventAnalyticsConfig.LAST_RANDOM_SPAWN_INSTANT);
+		if (spawned != null)
+		{
+			return spawned;
+		}
+
+		// One-time Update: This handles outdated profile config, should only ever need to be called once per profile.
+		RandomEventRecord record = localStorage.getMostRecentRandom();
+		if (record == null || record.spawnedTime < 0)
+		{
+			// This assumes the profile failed to load. eg. malformed data, old profile that never had a random spawn, etc.
+			// we'll reset the timer.
+			return Instant.now();
+		}
+
+		return Instant.ofEpochMilli(record.spawnedTime);
+	}
+
+	private Instant getInstantFromProfileConfig(String key)
+	{
+		try
+		{
+			return configManager.getConfiguration(RandomEventAnalyticsConfig.CONFIG_GROUP, profile, key,
+				Instant.class);
+		}
+		catch (NullPointerException e)
+		{
+			log.debug("No config loaded for: {}@{}", key, profile);
+			return null;
+		}
+	}
+
+	private synchronized void loadPreviousRandomEvents()
+	{
+		panel.clearAllRandomsView();
+		ArrayList<RandomEventRecord> randomEvents = localStorage.loadRandomEventRecords();
+		if (randomEvents.size() > 0)
+		{
+			randomEvents.forEach(panel::addRandom);
+		} else {
+			panel.clearAllRandomsView();
+		}
+	}
+
+	@Subscribe
+	public void onInteractingChanged(InteractingChanged event)
+	{
+		Actor source = event.getSource();
+		Actor target = event.getTarget();
+		Player player = client.getLocalPlayer();
+		// Check that the npc is interacting with the player and the player isn't interacting with the npc, so
+		// that the notification doesn't fire from talking to other user's randoms
+		if (player == null || target != player || player.getInteracting() == source || !(source instanceof NPC) || !RandomEventAnalyticsUtil.getEventNpcIds().contains(((NPC) source).getId()))
+		{
+			return;
+		}
+
+		/**
+		 * This is brought to you by the RandomEventPlugin. It seems sometimes you can
+		 * have multiple notifications for a single random, and in our case we can have
+		 * the same event added multiple times
+		 */
+		if (client.getTickCount() - lastNotificationTick > RANDOM_EVENT_TIMEOUT)
+		{
+			lastNotificationTick = client.getTickCount();
+			handleRandomEvent((NPC) source);
+		}
+	}
+
+	private void handleRandomEvent(NPC npc)
+	{
+		addRandomEvent(npc);
+	}
+
+	@Subscribe
+	public void onNpcSpawned(final NpcSpawned event)
+	{
+		final NPC npc = event.getNpc();
+		if (!isStrangePlant(npc.getId()))
+		{
+			return;
+		}
+		Player player = client.getLocalPlayer();
+		if (player.getWorldLocation().distanceTo(npc.getWorldLocation()) != STRANGE_PLANT_SPAWN_RADIUS)
+		{
+			return;
+		}
+		if (!timeTracking.isPossibleTimeForRandomEvent())
+		{
+			// We only want to notify about strange plants when it's possibly the user's random
+			return;
+		}
+
+		/**
+		 * Unfortunately we cannot determine if the Strange Plant belongs to the player
+		 * (See onInteractingChange)
+		 * However, we can rely on the player clicking the plant (onChatMessage) to determine
+		 * if the player spawned the plant.
+		 */
+		unconfirmedStrangePlantRecord = createRandomEventRecord(npc);
+		panel.addUnconfirmedRandom(unconfirmedStrangePlantRecord);
+		chatMessageManager.queue(QueuedMessage.builder().type(ChatMessageType.CONSOLE).runeLiteFormattedMessage(PLANT_SPAWNED_NOTIFICATION_MESSAGE).build());
+		notifier.notify(PLANT_SPAWNED_NOTIFICATION_MESSAGE);
+	}
+
+	@Subscribe
+	public void onGameTick(GameTick tick)
+	{
+		if (client.getGameState() == GameState.LOGGED_IN)
+		{
+			panel.updateEstimation();
+			timeTracking.onTick();
+		}
+	}
+
+	@Subscribe
+	public void onChatMessage(ChatMessage event) {
+		ChatMessageType type = event.getType();
+		if (unconfirmedStrangePlantRecord == null || (type != ChatMessageType.GAMEMESSAGE && type != ChatMessageType.SPAM)) {
+			return;
+		}
+
+		// If the plant was spawned >= 2 minutes ago, let's reset the record. TBD how long plants stick around.
+		if (unconfirmedStrangePlantRecord.spawnedTime > Instant.now().toEpochMilli() + (60000 * 2)) {
+			unconfirmedStrangePlantRecord = null;
+			return;
+		}
+
+		String message = Text.removeTags(event.getMessage());
+		if (message.startsWith("The fruit isn't ready to be picked yet.") || message.startsWith("You pick the fruit from the plant.")) {
+			addRandomEvent(unconfirmedStrangePlantRecord);
+			unconfirmedStrangePlantRecord = null;
+		} else if (message.startsWith("It's not here for you.")) {
+			unconfirmedStrangePlantRecord = null;
+		}
+		panel.removeUnconfirmedRandom();
+	}
+
+	private void persistTimeTrackingConfig()
+	{
+		timeTracking.persistConfig();
+	}
+
+	public void addRandomEvent(final NPC npc)
+	{
+		addRandomEvent(createRandomEventRecord(npc));
+	}
+
+	public void addRandomEvent(final RandomEventRecord record)
+	{
+		localStorage.addRandomEventRecord(record);
+		panel.addRandom(record);
+		/**
+		 * The strange plant is added after the confirmation is clicked. This offsets
+		 * our timers since the time the plant spawned.
+		 */
+		if (isStrangePlant(record.npcInfoRecord.npcId))
+		{
+			timeTracking.setStrangePlantSpawned(record);
+			unconfirmedStrangePlantRecord = null;
+		}
+		else
+		{
+			timeTracking.setRandomEventSpawned();
+		}
+	}
+
+	public int getNumberOfEventsLogged()
+	{
+		return localStorage.getNumberOfLoggedEvents();
+	}
+
+	private RandomEventRecord createRandomEventRecord(final NPC npc)
+	{
+		Player player = client.getLocalPlayer();
+		PlayerInfoRecord playerInfoRecord = PlayerInfoRecord.create(player);
+		NpcInfoRecord npcInfoRecord = NpcInfoRecord.create(npc);
+		XpInfoRecord xpInfoRecord = XpInfoRecord.create(client, xpTrackerService);
+		RandomEventRecord record = new RandomEventRecord(Instant.now().toEpochMilli(), timeTracking, npcInfoRecord,
+			playerInfoRecord, xpInfoRecord);
+		return record;
+	}
+
+	private boolean isStrangePlant(int npcId)
+	{
+		return npcId == NpcID.STRANGE_PLANT;
+	}
+
+	@Schedule(
+		period = 500,
+		unit = ChronoUnit.MILLIS
+	)
+	public void updateSchedule()
+	{
+		if (client.getGameState() == GameState.LOGGED_IN)
+		{
+			panel.updateEstimation();
+		}
+	}
+}

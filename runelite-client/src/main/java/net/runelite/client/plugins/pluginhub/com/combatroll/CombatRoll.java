@@ -1,0 +1,12 @@
+package net.runelite.client.plugins.pluginhub.com.combatroll;
+
+public enum CombatRoll
+{
+	DEFENSIVE_MAGIC,
+	DEFENSIVE_MELEE,
+	DEFENSIVE_RANGED,
+	OFFENSIVE_MAGIC,
+	OFFENSIVE_MELEE,
+	OFFENSIVE_RANGED
+}
+

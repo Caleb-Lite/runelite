@@ -1,0 +1,91 @@
+package net.runelite.client.plugins.pluginhub.com.strongholdofsecurity;
+
+import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.Client;
+import net.runelite.api.events.ClientTick;
+import net.runelite.api.events.WidgetLoaded;
+import net.runelite.api.widgets.ComponentID;
+import net.runelite.api.widgets.InterfaceID;
+import net.runelite.api.widgets.Widget;
+import net.runelite.api.widgets.WidgetID;
+import net.runelite.api.widgets.WidgetInfo;
+import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.plugins.Plugin;
+import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.util.ColorUtil;
+
+import javax.inject.Inject;
+import java.awt.*;
+
+@Slf4j
+@PluginDescriptor(
+        name = "Stronghold of Security Helper"
+)
+public class StrongholdOfSecurityPlugin extends Plugin {
+    private static final Color ANSWER_COLOR = new Color(0, 19, 230);
+
+    @Inject
+    private Client client;
+
+    private boolean isNPCDialogueOpen;
+    private boolean isNPCDialogOptionOpen;
+    private String question;
+
+    @Subscribe
+    public void onWidgetLoaded(WidgetLoaded widgetLoaded) {
+        switch (widgetLoaded.getGroupId()) {
+            case InterfaceID.DIALOG_NPC:
+                isNPCDialogueOpen = true;
+                break;
+            case InterfaceID.DIALOG_OPTION:
+                isNPCDialogOptionOpen = true;
+                break;
+        }
+    }
+
+    @Subscribe
+    public void onClientTick(ClientTick t) {
+        if (isNPCDialogueOpen) {
+            isNPCDialogueOpen = false;
+            onNPCDialogue();
+        }
+        if (isNPCDialogOptionOpen) {
+            isNPCDialogOptionOpen = false;
+            onNPCOption();
+        }
+    }
+
+    private void onNPCDialogue() {
+        final Widget debugWidget = client.getWidget(ComponentID.DIALOG_NPC_TEXT);
+        if (debugWidget != null) {
+			final String npcText = debugWidget.getText();
+			if (SecurityAnswers.QUESTION_ANSWER_MAP.containsKey(npcText)) {
+				question = npcText;
+				log.debug(question);
+			} else {
+				log.debug("New question:\n" + npcText);
+			}
+        }
+    }
+
+    private void onNPCOption() {
+        if (question != null) {
+			final Widget optionsWidget = client.getWidget(InterfaceID.DIALOG_OPTION, 0);
+			if (optionsWidget != null) {
+				final Widget[] widgets = optionsWidget.getParent().getChildren();
+				if (widgets != null) {
+					final Widget answerWidget = SecurityAnswers.findMatchingWidgetForQuestion(question, widgets);
+					// Reset question to be null because we found answer
+					question = null;
+					if (answerWidget != null) {
+						// Appends index of question before answer text
+						final String answerText = String.format("(%d) %s", answerWidget.getIndex(), answerWidget.getText());
+						// Set answer text with wanted color
+						answerWidget.setText(ColorUtil.wrapWithColorTag(answerText, ANSWER_COLOR));
+					}
+				}
+			}
+		}
+    }
+}
+

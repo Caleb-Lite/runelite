@@ -1,0 +1,23 @@
+package net.runelite.client.plugins.pluginhub.com.shootingstarstoclipboard;
+
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+
+@Getter
+@AllArgsConstructor
+public enum CopyFormat
+{
+	FULL_TEXT("Full Text"),
+	TRUNCATED_TEXT("Truncated Text"),
+	COMMA_DELIMITED("Comma Delimited"),
+	TAB_DELIMITED("Tab Delimited")
+	;
+
+	private final String name;
+
+	@Override
+	public String toString()
+	{
+		return getName();
+	}
+}

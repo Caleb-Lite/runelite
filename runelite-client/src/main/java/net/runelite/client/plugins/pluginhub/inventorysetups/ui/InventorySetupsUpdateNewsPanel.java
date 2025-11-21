@@ -1,0 +1,211 @@
+package net.runelite.client.plugins.pluginhub.inventorysetups.ui;
+
+import net.runelite.client.plugins.pluginhub.inventorysetups.InventorySetupsPlugin;
+import javax.swing.Box;
+import javax.swing.BoxLayout;
+import javax.swing.JButton;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.JSeparator;
+import javax.swing.JTextArea;
+import net.runelite.client.ui.ColorScheme;
+import net.runelite.client.ui.FontManager;
+import net.runelite.client.util.LinkBrowser;
+
+import javax.swing.border.EmptyBorder;
+import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Dimension;
+import java.awt.Font;
+
+import static inventorysetups.InventorySetupsPlugin.SUGGESTION_LINK;
+import static inventorysetups.InventorySetupsPlugin.TUTORIAL_LINK;
+
+public class InventorySetupsUpdateNewsPanel extends JPanel
+{
+
+	private static final String DONATION_LINK = "https://www.buymeacoffee.com/dillydill123";
+
+	InventorySetupsUpdateNewsPanel(InventorySetupsPlugin plugin, InventorySetupsPluginPanel panel)
+	{
+		final JLabel welcomeText = new JLabel("Inventory Setups " + plugin.getCurrentVersionString());
+		welcomeText.setFont(FontManager.getRunescapeBoldFont());
+		welcomeText.setHorizontalAlignment(JLabel.CENTER);
+
+		final JPanel welcomePanel = new JPanel(new BorderLayout());
+		welcomePanel.add(welcomeText, BorderLayout.NORTH);
+
+		final JPanel latestUpdatePanelInfo = getLatestUpdateInfoPanel();
+
+		final JLabel newUser = new JLabel("Are you a new user?");
+		final JLabel newUser2 = new JLabel("For help and support, click here");
+		final JButton linkToHelp = new JButton("View Guide");
+		linkToHelp.addActionListener(e ->
+		{
+			LinkBrowser.browse(TUTORIAL_LINK);
+		});
+		newUser.setFont(FontManager.getRunescapeSmallFont());
+		newUser2.setFont(FontManager.getRunescapeSmallFont());
+		newUser.setHorizontalAlignment(JLabel.CENTER);
+		newUser2.setHorizontalAlignment(JLabel.CENTER);
+
+		final JPanel newUserPanelInfo = new JPanel();
+		newUserPanelInfo.setLayout(new BorderLayout());
+		newUserPanelInfo.add(newUser, BorderLayout.NORTH);
+		newUserPanelInfo.add(newUser2, BorderLayout.CENTER);
+		newUserPanelInfo.add(linkToHelp, BorderLayout.SOUTH);
+
+		final JLabel suggestions = new JLabel("Have a suggestion? Found a bug?");
+		final JLabel suggestions2 = new JLabel("Click here to create an issue");
+		final JButton linkToSuggestion = new JButton("Make a Suggestion");
+		linkToSuggestion.addActionListener(e ->
+		{
+			LinkBrowser.browse(SUGGESTION_LINK);
+		});
+		suggestions.setFont(FontManager.getRunescapeSmallFont());
+		suggestions2.setFont(FontManager.getRunescapeSmallFont());
+		suggestions.setHorizontalAlignment(JLabel.CENTER);
+		suggestions2.setHorizontalAlignment(JLabel.CENTER);
+
+		final JPanel suggestionPanelInfo = new JPanel();
+		suggestionPanelInfo.setLayout(new BorderLayout());
+		suggestionPanelInfo.add(suggestions, BorderLayout.NORTH);
+		suggestionPanelInfo.add(suggestions2, BorderLayout.CENTER);
+		suggestionPanelInfo.add(linkToSuggestion, BorderLayout.SOUTH);
+
+		final JPanel closePanel = new JPanel(new BorderLayout());
+		final JButton returnToSetups = new JButton("Return to Setups");
+		returnToSetups.addActionListener(e ->
+		{
+			plugin.setSavedVersionString(plugin.getCurrentVersionString());
+			panel.showCorrectPanel();
+		});
+		final JLabel clickButtonToLeave = new JLabel("Click here to hide this window");
+		final JLabel clickButtonToLeave2 = new JLabel("until the next update");
+		clickButtonToLeave.setFont(FontManager.getRunescapeSmallFont());
+		clickButtonToLeave2.setFont(FontManager.getRunescapeSmallFont());
+		clickButtonToLeave.setHorizontalAlignment(JLabel.CENTER);
+		clickButtonToLeave2.setHorizontalAlignment(JLabel.CENTER);
+		closePanel.add(clickButtonToLeave, BorderLayout.NORTH);
+		closePanel.add(clickButtonToLeave2, BorderLayout.CENTER);
+		closePanel.add(returnToSetups, BorderLayout.SOUTH);
+
+		final JLabel donations = new JLabel("Want to make a donation?");
+		final JLabel donations2 = new JLabel("Click here to buy me a coffee");
+		final JButton linkToDonations = new JButton("Donate");
+		linkToDonations.addActionListener(e ->
+		{
+			LinkBrowser.browse(DONATION_LINK);
+		});
+		donations.setFont(FontManager.getRunescapeSmallFont());
+		donations2.setFont(FontManager.getRunescapeSmallFont());
+		donations.setHorizontalAlignment(JLabel.CENTER);
+		donations2.setHorizontalAlignment(JLabel.CENTER);
+
+		final JPanel donationPanelInfo = new JPanel();
+		donationPanelInfo.setLayout(new BorderLayout());
+		donationPanelInfo.add(donations, BorderLayout.NORTH);
+		donationPanelInfo.add(donations2, BorderLayout.CENTER);
+		donationPanelInfo.add(linkToDonations, BorderLayout.SOUTH);
+
+		final JPanel contentPanel = new JPanel();
+		contentPanel.setLayout(new BoxLayout(contentPanel, BoxLayout.Y_AXIS));
+		contentPanel.add(welcomePanel);
+		contentPanel.add(Box.createRigidArea(new Dimension(0, 8)));
+		contentPanel.add(latestUpdatePanelInfo);
+		contentPanel.add(Box.createRigidArea(new Dimension(0, 8)));
+		contentPanel.add(closePanel);
+		contentPanel.add(Box.createRigidArea(new Dimension(0, 8)));
+		contentPanel.add(newUserPanelInfo);
+		contentPanel.add(Box.createRigidArea(new Dimension(0, 8)));
+		contentPanel.add(suggestionPanelInfo);
+		contentPanel.add(Box.createRigidArea(new Dimension(0, 8)));
+		contentPanel.add(donationPanelInfo);
+
+		setLayout(new BorderLayout());
+		setBorder(new EmptyBorder(5, 10, 5, 10));
+		add(contentPanel, BorderLayout.NORTH);
+	}
+
+
+	private JPanel getLatestUpdateInfoPanel()
+	{
+		final JLabel patchNotesLabel = new JLabel("Patch Notes");
+		patchNotesLabel.setFont(FontManager.getRunescapeSmallFont());
+		patchNotesLabel.setHorizontalAlignment(JLabel.CENTER);
+
+		final JPanel patchTitlePanel = new JPanel(new BorderLayout());
+		patchTitlePanel.add(patchNotesLabel, BorderLayout.NORTH);
+
+		String updateText =	"Added a config option for bottom to top ZigZag layouts.\n\n" +
+							"Hotkeys are now disabled during chat box inputs (bank searches, PMs, etc.) by default. A new config option has been added to revert this.\n\n" +
+							"Fixed some issues with fuzzy items adding a placeholder incorrectly.\n\n" +
+							"As a reminder, layouts can be reset by right clicking the \"Show worn items\" button in the bank and navigating to \"Auto Layout\". Items can be moved freely in layouts without affecting their real positions in the bank.";
+
+		JTextArea textArea = new JTextArea(2, 20);
+		textArea.setText(updateText);
+		textArea.setWrapStyleWord(true);
+		textArea.setLineWrap(true);
+		textArea.setOpaque(false);
+		textArea.setEditable(false);
+		textArea.setFocusable(false);
+		textArea.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		Font textAreaFont = FontManager.getRunescapeSmallFont();
+		textAreaFont = textAreaFont.deriveFont(textAreaFont.getStyle(), (float)textAreaFont.getSize() - (float)0.1);
+		textArea.setFont(textAreaFont);
+
+		textArea.setBorder(new EmptyBorder(0, 0, 0, 0));
+
+		final JPanel contentPanel = new JPanel();
+		contentPanel.setLayout(new BoxLayout(contentPanel, BoxLayout.Y_AXIS));
+		contentPanel.add(patchTitlePanel);
+		contentPanel.add(Box.createRigidArea(new Dimension(0, 3)));
+		contentPanel.add(getJSeparator(ColorScheme.LIGHT_GRAY_COLOR));
+		contentPanel.add(Box.createRigidArea(new Dimension(0, 3)));
+		contentPanel.add(textArea);
+		contentPanel.add(Box.createRigidArea(new Dimension(0, 3)));
+		contentPanel.add(getJSeparator(ColorScheme.LIGHT_GRAY_COLOR));
+
+		final JPanel updatePanel = new JPanel(new BorderLayout());
+		updatePanel.add(contentPanel, BorderLayout.CENTER);
+
+		// DO NOT TOUCH - For some reason this stops the panel from expanding
+		updatePanel.getPreferredSize();
+
+		return updatePanel;
+	}
+
+	private JSeparator getJSeparator(Color color)
+	{
+		JSeparator sep = new JSeparator();
+		sep.setBackground(color);
+		sep.setForeground(color);
+		return sep;
+	}
+
+}
+
+/*
+ * Copyright (c) 2019, dillydill123 <https://github.com/dillydill123>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */

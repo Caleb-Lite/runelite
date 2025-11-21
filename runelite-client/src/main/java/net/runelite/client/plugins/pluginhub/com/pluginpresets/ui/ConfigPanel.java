@@ -1,0 +1,559 @@
+package net.runelite.client.plugins.pluginhub.com.pluginpresets.ui;
+
+import net.runelite.client.plugins.pluginhub.com.pluginpresets.PluginConfig;
+import net.runelite.client.plugins.pluginhub.com.pluginpresets.PluginPresetsPlugin;
+import net.runelite.client.plugins.pluginhub.com.pluginpresets.PluginPresetsPresetEditor;
+import net.runelite.client.plugins.pluginhub.com.pluginpresets.PluginPresetsPresetManager;
+import net.runelite.client.plugins.pluginhub.com.pluginpresets.PluginSetting;
+import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Dimension;
+import java.awt.FlowLayout;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.util.ArrayList;
+import java.util.List;
+import javax.swing.BoxLayout;
+import javax.swing.JCheckBox;
+import javax.swing.JLabel;
+import javax.swing.JMenuItem;
+import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
+import javax.swing.border.EmptyBorder;
+import net.runelite.client.ui.ColorScheme;
+import net.runelite.client.ui.FontManager;
+
+/**
+ * Panel for editing a single preset
+ */
+public class ConfigPanel extends JPanel
+{
+	private final PluginConfig presetConfig;
+	private final PluginConfig currentConfig;
+	private final PluginPresetsPlugin plugin;
+	private final JLabel updateLabel = new JLabel();
+	private final JLabel notificationLabel = new JLabel();
+	private final boolean presetHasConfigurations;
+	private final boolean external;
+	private final boolean configsMatch;
+	private final JPanel settings = new JPanel(new GridBagLayout());
+	private final List<String> openSettings;
+	private final boolean settingsVisible;
+	private final PluginPresetsPresetManager presetManager;
+	private final PluginPresetsPresetEditor presetEditor;
+
+	public ConfigPanel(PluginConfig currentConfig, PluginConfig presetConfig, PluginPresetsPlugin plugin, List<String> openSettings)
+	{
+		this.presetConfig = presetConfig;
+		this.currentConfig = currentConfig;
+		this.plugin = plugin;
+		this.openSettings = openSettings;
+
+		presetManager = plugin.getPresetManager();
+		presetEditor = plugin.getPresetEditor();
+
+		presetHasConfigurations = presetHasConfigurations();
+		configsMatch = currentConfig.match(presetConfig);
+		external = isExternalPluginConfig();
+		boolean installed = isExternalPluginInstalled();
+		settingsVisible = isSettingsVisible();
+
+		setLayout(new BorderLayout());
+		setBorder(new EmptyBorder(0, 3, 0, 0));
+		JCheckBox checkbox = new JCheckBox();
+		checkbox.setBackground(ColorScheme.LIGHT_GRAY_COLOR);
+
+		JLabel title = new JLabel();
+		JLabel downArrow = new JLabel();
+		title.setText(currentConfig.getName());
+		JPopupMenu customSettingPopupMenu = getCustomSettingPopupMenu();
+		title.setComponentPopupMenu(customSettingPopupMenu);
+		// 0 width is to prevent the title causing the panel to grow in y direction on long plugin names
+		// 16 height is UPDATE_ICONs height
+		title.setPreferredSize(new Dimension(0, 26));
+		title.addMouseListener(new MouseAdapter()
+		{
+			private Color foreground;
+
+			@Override
+			public void mousePressed(MouseEvent mouseEvent)
+			{
+				if (mouseEvent.getButton() != MouseEvent.BUTTON3) // Right click
+				{
+					toggleSettings();
+				}
+			}
+
+			@Override
+			public void mouseEntered(MouseEvent mouseEvent)
+			{
+				foreground = title.getForeground(); // Remember the original foreground color
+				title.setForeground(ColorScheme.BRAND_ORANGE);
+				if (!settingsVisible)
+				{
+					downArrow.setIcon(Icons.ARROW_RIGHT_HOVER_ICON);
+				}
+			}
+
+			@Override
+			public void mouseExited(MouseEvent mouseEvent)
+			{
+				title.setForeground(foreground);
+				if (!settingsVisible)
+				{
+					downArrow.setIcon(Icons.ARROW_RIGHT_ICON);
+				}
+			}
+		});
+
+		JLabel externalNotice = new JLabel();
+		if (external)
+		{
+			externalNotice.setText("(E)");
+			externalNotice.setToolTipText("Plugin from Plugin Hub");
+			externalNotice.setBorder(new EmptyBorder(0, 3, 0, 0));
+			externalNotice.setForeground(ColorScheme.BRAND_ORANGE);
+		}
+
+		JLabel partialNotice = new JLabel();
+		if (presetHasConfigurations && isPartial())
+		{
+			partialNotice.setText("(P)");
+			partialNotice.setToolTipText("Some settings unticked");
+			partialNotice.setBorder(new EmptyBorder(0, 3, 0, 0));
+			partialNotice.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		}
+
+		JLabel customNotice = new JLabel();
+		if (currentConfig.containsCustomSettings())
+		{
+			customNotice.setText("(C)");
+			customNotice.setToolTipText("Contains custom settings");
+			customNotice.setBorder(new EmptyBorder(0, 3, 0, 0));
+			customNotice.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		}
+
+		JLabel statusLabel = new JLabel();
+		JLabel notInstalledLabel = new JLabel();
+		if (presetHasConfigurations)
+		{
+			checkbox.setSelected(true);
+			checkbox.setToolTipText("Remove '" + currentConfig.getName() + "' configurations from the preset.");
+			JPopupMenu updateAllPopupMenu = getUpdateAllMenuPopup();
+			checkbox.setComponentPopupMenu(updateAllPopupMenu);
+			checkbox.addMouseListener(new MouseAdapter()
+			{
+				@Override
+				public void mousePressed(MouseEvent mouseEvent)
+				{
+					if (mouseEvent.getButton() != MouseEvent.BUTTON3) // Right click
+					{
+						presetEditor.removeConfigurationFromEdited(presetConfig);
+					}
+				}
+			});
+
+			if (!configsMatch)
+			{
+				title.setToolTipText("Your '" + currentConfig.getName() + "' configurations do not match the preset.");
+
+				statusLabel.setText("Modified");
+				statusLabel.setForeground(ColorScheme.PROGRESS_INPROGRESS_COLOR);
+				statusLabel.setToolTipText("Your '" + currentConfig.getName() + "' configurations do not match the preset.");
+
+				if (settingsVisible)
+				{
+					statusLabel.setBorder(new EmptyBorder(5, 0, 0, 0));
+					updateLabel.setBorder(new EmptyBorder(4, 0, 0, 5));
+				}
+
+				updateLabel.setIcon(Icons.UPDATE_ICON);
+				updateLabel.setToolTipText("Replace presets '" + currentConfig.getName() + "' configurations with your current configuration.");
+				updateLabel.addMouseListener(new MouseAdapter()
+				{
+					@Override
+					public void mousePressed(MouseEvent mouseEvent)
+					{
+						presetEditor.updateConfigurations(presetConfig, currentConfig);
+					}
+
+					@Override
+					public void mouseEntered(MouseEvent mouseEvent)
+					{
+						updateLabel.setIcon(Icons.UPDATE_HOVER_ICON);
+					}
+
+					@Override
+					public void mouseExited(MouseEvent mouseEvent)
+					{
+						updateLabel.setIcon(Icons.UPDATE_ICON);
+					}
+				});
+			}
+			else
+			{
+				title.setToolTipText("Your '" + currentConfig.getName() + "' configurations match the preset.");
+				title.setForeground(Color.WHITE);
+			}
+
+			if (external && !installed)
+			{
+				title.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
+
+				notInstalledLabel.setIcon(Icons.NOT_INSTALLED_ICON);
+				notInstalledLabel.setToolTipText("Plugin not installed, download from Plugin Hub if you want to use these settings or click to remove.");
+				notInstalledLabel.setBorder(new EmptyBorder(5, 0, 0, 4));
+				notInstalledLabel.addMouseListener(new MouseAdapter()
+				{
+					@Override
+					public void mousePressed(MouseEvent mouseEvent)
+					{
+						int confirm = JOptionPane.showConfirmDialog(notInstalledLabel,
+							"Are you sure to remove '" + presetConfig.getName() + "' configurations from the preset.",
+							"Remove configuration", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+
+						if (confirm == 0)
+						{
+							presetEditor.removeConfigurationFromEdited(presetConfig);
+						}
+					}
+
+					@Override
+					public void mouseEntered(MouseEvent mouseEvent)
+					{
+						notInstalledLabel.setIcon(Icons.NOT_INSTALLED_HOVER_ICON);
+					}
+
+					@Override
+					public void mouseExited(MouseEvent mouseEvent)
+					{
+						notInstalledLabel.setIcon(Icons.NOT_INSTALLED_ICON);
+					}
+				});
+			}
+		}
+		else
+		{
+			title.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
+			title.setToolTipText("This preset does not include any configurations to '" + currentConfig.getName() + "' plugin.");
+
+			checkbox.setSelected(false);
+			checkbox.setToolTipText("Add your current '" + currentConfig.getName() + "' configurations to the preset.");
+			JPopupMenu updateAllPopupMenu = getUpdateAllMenuPopup();
+			checkbox.setComponentPopupMenu(updateAllPopupMenu);
+			checkbox.addMouseListener(new MouseAdapter()
+			{
+				@Override
+				public void mousePressed(MouseEvent mouseEvent)
+				{
+					if (mouseEvent.getButton() != MouseEvent.BUTTON3) // Right click
+					{
+						presetEditor.addConfigurationToEdited(currentConfig);
+					}
+				}
+			});
+		}
+
+		notificationLabel.setIcon(Icons.NOTIFICATION_ICON);
+		notificationLabel.setVisible(false);
+
+		downArrow.setIcon(settingsVisible ? Icons.ARROW_DOWN_ICON : Icons.ARROW_RIGHT_ICON);
+		downArrow.addMouseListener(new MouseAdapter()
+		{
+			private Color foreground;
+
+			@Override
+			public void mousePressed(MouseEvent mouseEvent)
+			{
+				toggleSettings();
+			}
+
+			@Override
+			public void mouseEntered(MouseEvent mouseEvent)
+			{
+				foreground = title.getForeground(); // Remember the original foreground color
+				title.setForeground(ColorScheme.BRAND_ORANGE);
+				if (!settingsVisible)
+				{
+					downArrow.setIcon(Icons.ARROW_RIGHT_HOVER_ICON);
+				}
+			}
+
+			@Override
+			public void mouseExited(MouseEvent mouseEvent)
+			{
+				title.setForeground(foreground);
+				if (!settingsVisible)
+				{
+					downArrow.setIcon(Icons.ARROW_RIGHT_ICON);
+				}
+			}
+		});
+
+		checkbox.setVisible(!settingsVisible && !(external && !installed));
+
+		JPanel leftActions = new JPanel();
+		leftActions.setLayout(new BoxLayout(leftActions, BoxLayout.X_AXIS));
+		leftActions.add(downArrow);
+		leftActions.add(title);
+		leftActions.add(externalNotice);
+		leftActions.add(partialNotice);
+		leftActions.add(customNotice);
+
+		JPanel rightActions = new JPanel();
+		rightActions.setLayout(new FlowLayout(FlowLayout.LEFT, 3, 0));
+		rightActions.add(statusLabel);
+		rightActions.add(notInstalledLabel);
+		rightActions.add(notificationLabel);
+		rightActions.add(updateLabel);
+		rightActions.add(checkbox);
+
+		JPanel topActions = new JPanel(new BorderLayout());
+		topActions.add(leftActions, BorderLayout.CENTER);
+		topActions.add(rightActions, BorderLayout.EAST);
+
+		if (settingsVisible)
+		{
+			createSettings();
+		}
+		settings.setBorder(new EmptyBorder(0, 5, 3, 0));
+		settings.setVisible(settingsVisible);
+
+		add(topActions, BorderLayout.NORTH);
+		add(settings, BorderLayout.CENTER);
+	}
+
+	private void createSettings()
+	{
+		GridBagConstraints constraints = new GridBagConstraints();
+		constraints.fill = GridBagConstraints.HORIZONTAL;
+		constraints.weightx = 1;
+		constraints.gridx = 0;
+		constraints.gridy = 0;
+
+		settings.removeAll();
+
+		settings.add(getEnabledRow(), constraints);
+		constraints.gridy++;
+
+		// Some plugins don't have settings like Ammo, Account, Emojis etc.
+		List<PluginSetting> presetSettings = (presetConfig != null) ? presetConfig.getSettings() : null;
+
+		ArrayList<String> loopedInvalidConfigurations = new ArrayList<>();
+		String configName = currentConfig.getConfigName();
+		List<String> keys = currentConfig.getSettingKeys();
+
+		currentConfig.getSettings().forEach(currentSetting ->
+		{
+			PluginSetting presetSetting;
+			if (presetHasConfigurations)
+			{
+				assert presetConfig != null;
+				presetSetting = presetConfig.getSetting(currentSetting);
+			}
+			else
+			{
+				presetSetting = null;
+			}
+
+			if (presetSettings != null && !loopedInvalidConfigurations.contains(configName))
+			{
+				presetSettings.forEach(setting ->
+				{
+					boolean invalidSetting = !keys.contains(setting.getKey()) && setting.getCustomConfigName() == null;
+					if (invalidSetting)
+					{
+						settings.add(new ConfigRow(null, null, setting, plugin), constraints);
+						constraints.gridy++;
+
+						if (!settingsVisible)
+						{
+							notificationLabel.setVisible(true);
+							notificationLabel.setToolTipText("Preset contains invalid configurations for this plugin");
+						}
+					}
+				});
+
+				loopedInvalidConfigurations.add(configName);
+			}
+			settings.add(new ConfigRow(currentConfig, currentSetting, presetSetting, plugin), constraints);
+			constraints.gridy++;
+		});
+	}
+
+	private JPanel getEnabledRow()
+	{
+		JPanel enabledRow = new JPanel(new BorderLayout());
+
+		JLabel title = new JLabel();
+		title.setText("Plugin on/off");
+		title.setToolTipText("Whether the plugin is disabled or not.");
+		// 0 width is to prevent the title causing the panel to grow in y direction on long setting descriptions
+		// 16 height is UPDATE_ICONs height
+		title.setPreferredSize(new Dimension(0, 16));
+		title.setFont(FontManager.getRunescapeSmallFont());
+
+		JCheckBox checkBox = new JCheckBox();
+		if (presetHasConfigurations && presetConfig.getEnabled() != null)
+		{
+			checkBox.setToolTipText("Remove plugin on/off configuration from the preset.");
+			checkBox.setSelected(true);
+			checkBox.addMouseListener(new MouseAdapter()
+			{
+				@Override
+				public void mousePressed(MouseEvent mouseEvent)
+				{
+					presetEditor.removeEnabledFromEdited(currentConfig);
+				}
+			});
+
+			if (currentConfig.getEnabled().equals(presetConfig.getEnabled()))
+			{
+				title.setForeground(Color.LIGHT_GRAY);
+			}
+			else
+			{
+				title.setForeground(ColorScheme.BRAND_ORANGE);
+			}
+
+		}
+		else
+		{
+			title.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
+			checkBox.setSelected(false);
+			checkBox.setToolTipText("Add plugin on/off configuration to the preset.");
+			checkBox.addMouseListener(new MouseAdapter()
+			{
+				@Override
+				public void mousePressed(MouseEvent mouseEvent)
+				{
+					presetEditor.addEnabledToEdited(currentConfig);
+				}
+			});
+		}
+
+		JPanel rightActions = new JPanel();
+		rightActions.setLayout(new FlowLayout(FlowLayout.LEFT, 14, 0));
+		rightActions.add(checkBox);
+
+		enabledRow.add(title, BorderLayout.CENTER);
+		enabledRow.add(rightActions, BorderLayout.EAST);
+
+		return enabledRow;
+	}
+
+	private boolean isSettingsVisible()
+	{
+		return openSettings.contains(currentConfig.getName());
+	}
+
+	private JPopupMenu getCustomSettingPopupMenu()
+	{
+		JMenuItem addCustomOption = new JMenuItem();
+		addCustomOption.setText("Add custom setting");
+		addCustomOption.addActionListener(e -> promptCustomSettingInput());
+
+		JPopupMenu popupMenu = new JPopupMenu();
+		popupMenu.setBorder(new EmptyBorder(2, 2, 2, 0));
+		popupMenu.add(addCustomOption);
+		return popupMenu;
+	}
+
+	private void promptCustomSettingInput()
+	{
+		String customPresetName = JOptionPane.showInputDialog(ConfigPanel.this,
+			"Format: configName.settingKey", currentConfig.getName() + " custom setting", JOptionPane.PLAIN_MESSAGE);
+
+		if (customPresetName != null && customPresetName.length() > 0)
+		{
+			presetEditor.addCustomSettingToEdited(currentConfig, customPresetName);
+		}
+	}
+
+	private void toggleSettings()
+	{
+		String name = currentConfig.getName();
+		if (settingsVisible)
+		{
+			openSettings.remove(name);
+		}
+		else
+		{
+			openSettings.add(name);
+		}
+
+		plugin.rebuildPluginUi();
+	}
+
+	private boolean presetHasConfigurations()
+	{
+		return presetConfig != null;
+	}
+
+	private boolean isExternalPluginConfig()
+	{
+		return presetManager.isExternalPlugin(currentConfig.getName());
+	}
+
+	private boolean isExternalPluginInstalled()
+	{
+		return external && presetManager.isExternalPluginInstalled(currentConfig.getName());
+	}
+
+	private boolean isPartial()
+	{
+		return presetConfig.getSettings().size() < currentConfig.getSettings().size()
+			|| (presetConfig.getEnabled() == null && presetConfig.getSettings().size() > 0);
+	}
+
+	private JPopupMenu getUpdateAllMenuPopup()
+	{
+		JPopupMenu popupMenu = new JPopupMenu();
+		popupMenu.setBorder(new EmptyBorder(2, 2, 2, 0));
+
+		if (configsMatch)
+		{
+			JMenuItem removeOption = new JMenuItem();
+			removeOption.setText("Remove " + currentConfig.getName() + " from all presets");
+			removeOption.addActionListener(e -> presetEditor.removeConfigurationFromPresets(currentConfig));
+			popupMenu.add(removeOption);
+		}
+		else
+		{
+			JMenuItem addOption = new JMenuItem();
+			addOption.setText("Add " + currentConfig.getName() + " to all presets");
+			addOption.addActionListener(e -> presetEditor.addConfigurationToPresets(currentConfig));
+			popupMenu.add(addOption);
+		}
+
+		return popupMenu;
+	}
+}
+
+/*
+ * Copyright (c) 2021, antero111 <https://github.com/antero111>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */

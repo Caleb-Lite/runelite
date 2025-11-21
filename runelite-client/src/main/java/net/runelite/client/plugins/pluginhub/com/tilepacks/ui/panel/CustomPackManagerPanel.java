@@ -1,0 +1,118 @@
+package net.runelite.client.plugins.pluginhub.com.tilepacks.ui.panel;
+
+import com.google.common.reflect.TypeToken;
+import com.google.gson.Gson;
+import net.runelite.client.plugins.pluginhub.com.tilepacks.PointManager;
+import net.runelite.client.plugins.pluginhub.com.tilepacks.TilePackManager;
+import net.runelite.client.plugins.pluginhub.com.tilepacks.data.GroundMarkerPoint;
+import net.runelite.client.ui.ColorScheme;
+import net.runelite.client.ui.PluginPanel;
+import net.runelite.client.ui.components.FlatTextField;
+
+import javax.swing.*;
+import java.awt.*;
+import java.util.List;
+
+/**
+ * UI that handles the addition of new tile packs
+ */
+public class CustomPackManagerPanel extends PluginPanel {
+
+    private final TilePackManager tilePackManager;
+    private final PointManager pointManager;
+    private final Gson gson;
+    private final TilePacksListPanel tilePacksList;
+
+    private final JLabel inputLabel;
+    private final FlatTextField nameInput;
+    private final JLabel tilesLabel;
+    private final FlatTextField tilesInput;
+    private final JButton addPackButton;
+
+    CustomPackManagerPanel(TilePackManager tilePackManager, PointManager pointManager,
+                           Gson gson, TilePacksListPanel tilePacksList) {
+        super();
+        this.tilePackManager = tilePackManager;
+        this.pointManager = pointManager;
+        this.gson = gson;
+        this.tilePacksList = tilePacksList;
+
+        inputLabel = new JLabel("Custom Pack Name");
+        add(inputLabel);
+
+        nameInput = new FlatTextField();
+        nameInput.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 20, 30));
+        nameInput.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+        nameInput.setHoverBackgroundColor(ColorScheme.DARK_GRAY_HOVER_COLOR);
+        nameInput.setMinimumSize(new Dimension(0, 30));
+        add(nameInput);
+
+        tilesLabel = new JLabel("Custom Pack Tiles");
+        add(tilesLabel);
+
+        tilesInput = new FlatTextField();
+        tilesInput.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 20, 30));
+        tilesInput.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+        tilesInput.setHoverBackgroundColor(ColorScheme.DARK_GRAY_HOVER_COLOR);
+        tilesInput.setMinimumSize(new Dimension(0, 30));
+        add(tilesInput);
+
+        addPackButton = new JButton();
+        addPackButton.setText("Add Pack");
+        addPackButton.setHorizontalAlignment(JLabel.CENTER);
+        addPackButton.setFocusable(false);
+        addPackButton.setPreferredSize((new Dimension(PluginPanel.PANEL_WIDTH - 10, 30)));
+        addPackButton.addActionListener(e ->
+        {
+            if (nameInput.getText().isEmpty()) {
+                JOptionPane.showMessageDialog(inputLabel, "Must add a pack name");
+                return;
+            }
+            if (tilesInput.getText().isEmpty()) {
+                JOptionPane.showMessageDialog(inputLabel, "Must add tiles");
+            }
+            //check the format of the import points. We actually save the string, so this formatting is just to check it is valid.
+            List<GroundMarkerPoint> importPoints;
+            try {
+                importPoints = gson.fromJson(tilesInput.getText(), new TypeToken<List<GroundMarkerPoint>>() {
+                }.getType());
+            } catch (Exception ex) {
+                JOptionPane.showMessageDialog(inputLabel, "Error parsing tiles, check the formatting");
+                return;
+            }
+            if (importPoints.isEmpty()) {
+                JOptionPane.showMessageDialog(inputLabel, "Error parsing tiles, check the formatting");
+                return;
+            }
+            tilePackManager.addCustomPack(nameInput.getText(), tilesInput.getText());
+            pointManager.loadPoints();
+            tilePacksList.createTilePackPanels();
+        });
+        add(addPackButton);
+    }
+}
+
+/*
+ * Copyright (c) 2024, Trevor <https://github.com/TrevorMDev>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */

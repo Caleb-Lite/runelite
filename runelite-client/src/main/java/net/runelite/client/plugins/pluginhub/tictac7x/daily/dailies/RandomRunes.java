@@ -1,0 +1,63 @@
+package net.runelite.client.plugins.pluginhub.tictac7x.daily.dailies;
+
+import net.runelite.api.gameval.ItemID;
+import net.runelite.api.gameval.VarbitID;
+import net.runelite.client.plugins.pluginhub.tictac7x.daily.TicTac7xDailyTasksConfig;
+import net.runelite.client.plugins.pluginhub.tictac7x.daily.common.DailyInfobox;
+import net.runelite.client.plugins.pluginhub.tictac7x.daily.common.Provider;
+
+import java.util.Random;
+
+public class RandomRunes extends DailyInfobox {
+    private final String tooltip = "Claim %d random runes from Lundail at Mage Arena bank";
+
+    public RandomRunes(final Provider provider) {
+        super(TicTac7xDailyTasksConfig.random_runes, provider.itemManager.getImage(getRandomRuneId()), provider);
+    }
+
+    static private int getRandomRuneId() {
+        final int[] rune_ids = new int[]{
+            ItemID.MINDRUNE,
+            ItemID.BODYRUNE,
+            ItemID.COSMICRUNE,
+            ItemID.NATURERUNE,
+            ItemID.LAWRUNE,
+            ItemID.CHAOSRUNE,
+            ItemID.DEATHRUNE,
+        };
+        final int random = new Random().nextInt(rune_ids.length);
+        return rune_ids[random];
+    }
+
+    @Override
+    public boolean isShowing() {
+        return (
+            provider.config.showRandomRunes() &&
+            varbitEqualsOne(VarbitID.WILDERNESS_DIARY_EASY_COMPLETE) &&
+            !varbitEqualsOne(VarbitID.LUNDAIL_LAST_CLAIMED)
+        );
+    }
+
+    @Override
+    public String getText() {
+        return String.valueOf(getRandomRunesAmount());
+    }
+
+    @Override
+    public String getTooltip() {
+        return String.format(tooltip, getRandomRunesAmount());
+    }
+
+    private int getRandomRunesAmount() {
+        final boolean easy   = varbitEqualsOne(VarbitID.WILDERNESS_DIARY_EASY_COMPLETE);
+        final boolean medium = varbitEqualsOne(VarbitID.WILDERNESS_DIARY_MEDIUM_COMPLETE);
+        final boolean hard   = varbitEqualsOne(VarbitID.WILDERNESS_DIARY_HARD_COMPLETE);
+        final boolean elite  = varbitEqualsOne(VarbitID.WILDERNESS_DIARY_ELITE_COMPLETE);
+
+        if (easy && medium && hard && elite) return 200;
+        if (easy && medium && hard) return 120;
+        if (easy && medium) return 80;
+        if (easy) return 40;
+        return 0;
+    }
+}

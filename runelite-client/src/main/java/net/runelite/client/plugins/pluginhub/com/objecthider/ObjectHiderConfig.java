@@ -1,0 +1,36 @@
+package net.runelite.client.plugins.pluginhub.com.objecthider;
+
+import net.runelite.client.config.Config;
+import net.runelite.client.config.ConfigGroup;
+import net.runelite.client.config.ConfigItem;
+import net.runelite.client.config.ConfigSection;
+import net.runelite.client.config.Keybind;
+
+@ConfigGroup("objecthider")
+public interface ObjectHiderConfig extends Config {
+  @ConfigSection(name = "IDs to hide", description = "The list of Ground Object IDs to hide", position = 0, closedByDefault = true)
+  String listSection = "listSection";
+
+  @ConfigItem(keyName = "toHide", name = "", description = "List of Ground Objects IDs to hide", position = 0, section = "listSection")
+  default String getGroundObjectsToHide() {
+    return "";
+  }
+
+  @ConfigItem(keyName = "toHide", name = "", description = "")
+  void setGroundObjectsToHide(String groundObjectsToHide);
+
+  @ConfigItem(keyName = "hotkey", name = "Hotkey", description = "When you hold this key and right-click a tile, you'll hide the Ground Object on it", position = 1)
+  default Keybind hideGroundObjectKey() {
+    return Keybind.NOT_SET;
+  }
+
+  @ConfigItem(keyName = "hideAll", name = "Hide All", description = "Whether to hide all Ground Objects regardless of the list", position = 2)
+  default boolean getHideAll() {
+    return false;
+  }
+
+  @ConfigItem(keyName = "hideMinimapIcons", name = "Hide Minimap Icons", description = "Whether to hide all minimap icons regardless of the list", position = 3)
+  default boolean getHideMinimapIcons() {
+    return false;
+  }
+}

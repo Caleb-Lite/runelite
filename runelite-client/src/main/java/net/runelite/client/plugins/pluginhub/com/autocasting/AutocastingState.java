@@ -1,0 +1,226 @@
+package net.runelite.client.plugins.pluginhub.com.autocasting;
+
+import net.runelite.client.plugins.pluginhub.com.autocasting.datatypes.PlayerInventory;
+import net.runelite.client.plugins.pluginhub.com.autocasting.datatypes.RuneType;
+import net.runelite.client.plugins.pluginhub.com.autocasting.datatypes.Spell;
+import net.runelite.client.plugins.pluginhub.com.autocasting.dependencies.attackstyles.WeaponType;
+
+import lombok.Getter;
+import lombok.Setter;
+
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import java.util.Map;
+import net.runelite.api.EquipmentInventorySlot;
+import net.runelite.api.Item;
+import net.runelite.api.ItemContainer;
+
+@Singleton
+public class AutocastingState
+{
+	@Inject
+	private AutocastingClientData clientData;
+
+	@Inject
+	private AutocastingRuneUtil runeUtil;
+
+	@Inject
+	private AutocastingNotifications notifications;
+
+	@Getter
+	@Setter
+	private boolean magicLevelTooLowForSpell;
+
+	@Getter
+	@Setter
+	private boolean isEquippedWeaponMagic;
+
+	@Getter
+	@Setter
+	private boolean isEquippedWeaponBlacklisted;
+
+	@Getter
+	@Setter
+	private WeaponType currentWeaponType;
+
+	@Getter
+	@Setter
+	private Spell currentAutocastSpell;
+
+	@Getter
+	@Setter
+	private PlayerInventory playerInventory;
+
+	@Getter
+	@Setter
+	private boolean consideredInCombat;
+
+	@Getter
+	@Setter
+	private int lastCombatTick;
+
+	@Getter
+	@Setter
+	private Map<RuneType, Integer> availableRunes;
+
+	@Getter
+	@Setter
+	private int castsRemaining;
+
+	@Getter
+	@Setter
+	private boolean banking;
+
+	@Getter
+	@Setter
+	private boolean recentlySentNoSpellSelectedNotification;
+
+	public void updateAutocastSpell()
+	{
+		// Get new autocast spell.
+		Spell newAutocastSpell = clientData.getAutocastSpell();
+		if (newAutocastSpell == null)
+		{
+			return;
+		}
+		if (newAutocastSpell.getVarbitValue() == Spell.NO_SPELL.getVarbitValue())
+		{
+			if (isEquippedWeaponMagic && !recentlySentNoSpellSelectedNotification) {
+				notifications.notifyNoSpellSelected();
+				recentlySentNoSpellSelectedNotification = true;
+			}
+		}
+
+		// If the new spell is not null, and there is currently no autocast spell selected, update it
+		if (currentAutocastSpell == null || newAutocastSpell.getVarbitValue() != currentAutocastSpell.getVarbitValue())
+		{
+			currentAutocastSpell = newAutocastSpell;
+		}
+		updateCastsRemaining(true);
+	}
+
+	public boolean hasActiveAutocast()
+	{
+		return currentAutocastSpell != null && currentAutocastSpell != Spell.NO_SPELL;
+	}
+
+    /*
+    Calculating casts remaining is a 3 stage process, first we check inventory, equipment, and rune pouch for relevant items
+    These get set on PlayerInventory. Subscription hooks will call stage 1 methods - updateRunes, updateInfiniteRuneSources
+    At the end of both functions the second stage is called which computes total runes based on all factors.
+    Finally based on current autocast spell and stage 2 results we can math out the number of casts available
+    */
+
+	public void updateRunes()
+	{
+		setPlayerInventory(runeUtil.updateInventory(playerInventory));
+		calculateNetRuneTypes();
+	}
+
+	public void updateInfiniteRuneSources()
+	{
+		setPlayerInventory(runeUtil.updateEquipment(playerInventory));
+		calculateNetRuneTypes();
+	}
+
+	private void calculateNetRuneTypes()
+	{
+		setAvailableRunes(runeUtil.availableRunes(playerInventory));
+		updateCastsRemaining(false);
+	}
+
+	public void updateCastsRemaining(boolean autocastSpellUpdate)
+	{
+		if (currentAutocastSpell == null || currentAutocastSpell == Spell.NO_SPELL)
+		{
+			castsRemaining = 0;
+			return;
+		}
+		if (availableRunes == null) {
+			// Race condition upon startup, autocast varbit may be set before inventory is loaded.
+			// availableRunes will not be set, but will get set soon after; update casts remaining then
+			castsRemaining = 0;
+			return;
+		}
+
+		int newCastsRemaining = runeUtil.calculateCastsRemaining(currentAutocastSpell, availableRunes);
+		if (!autocastSpellUpdate && castsRemaining != newCastsRemaining)
+		{
+			// The number updated, so let's go through the configs and see if we need to send notifications
+			notifications.handleCastsUpdated(castsRemaining, newCastsRemaining);
+		}
+		castsRemaining = newCastsRemaining;
+	}
+
+	public void updateIsEquippedWeaponMagic()
+	{
+		int weaponTypeID = clientData.getWeaponTypeId();
+		WeaponType newWeaponType = WeaponType.getWeaponType(weaponTypeID);
+		if (newWeaponType == currentWeaponType)
+		{
+			return;
+		}
+		currentWeaponType = newWeaponType;
+
+		isEquippedWeaponMagic = newWeaponType == WeaponType.TYPE_18 ||
+								newWeaponType == WeaponType.TYPE_21 ||
+								newWeaponType == WeaponType.TYPE_22;
+
+		// The below types do have a casting option, but do not autocast spells, so leave them out.
+		// TYPE_6: These are salamanders. They do not autocast, but give magic xp, so technically have a "casting" option.
+		// TYPE_23: Trident, Sanguinesti, etc. Do not have autocast options, so do not show overlay when these are equipped.
+	}
+
+	public void updateIsBlacklisted()
+	{
+		ItemContainer equipment = clientData.getEquipment();
+		Item weaponSlot = equipment.getItem(EquipmentInventorySlot.WEAPON.getSlotIdx());
+		if (weaponSlot == null) {
+			isEquippedWeaponBlacklisted = false;
+			return;
+		}
+
+		int weaponId = weaponSlot.getId();
+		for (int blacklistedId : AutocastingConstants.BLACKLISTED_WEAPONS) {
+			if (weaponId == blacklistedId) {
+				isEquippedWeaponBlacklisted = true;
+				return;
+			}
+		}
+		isEquippedWeaponBlacklisted = false;
+	}
+
+	public void updateMagicLevel(int boostedLevel)
+	{
+		Spell autocastSpell = Spell.getSpell(clientData.getAutocastVarbit());
+
+		if (boostedLevel < autocastSpell.getLevelRequirement())
+		{
+			// We don't need to send new messages or update state if it didn't actually change
+			if (!magicLevelTooLowForSpell)
+			{
+				magicLevelTooLowForSpell = true;
+				notifications.notifyStatDrain();
+			}
+		}
+		else
+		{
+			magicLevelTooLowForSpell = false;
+		}
+	}
+
+	public void updateCombatStatus()
+	{
+		boolean inCombat = clientData.isInCombat();
+		int currentTick = clientData.getGameTick();
+		if (inCombat)
+		{
+			lastCombatTick = currentTick;
+			consideredInCombat = true;
+		}
+		else
+		{
+			consideredInCombat = currentTick - lastCombatTick <= AutocastingConstants.OUT_OF_COMBAT_TICK_DELAY;
+		}
+	}
+}

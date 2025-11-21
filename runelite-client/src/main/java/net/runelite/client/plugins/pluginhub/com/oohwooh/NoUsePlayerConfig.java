@@ -1,0 +1,30 @@
+package net.runelite.client.plugins.pluginhub.com.oohwooh;
+
+import net.runelite.client.config.Config;
+import net.runelite.client.config.ConfigGroup;
+import net.runelite.client.config.ConfigItem;
+
+@ConfigGroup("no-use-player")
+public interface NoUsePlayerConfig extends Config {
+    @ConfigItem(
+            keyName = "whitelistItemsString",
+            name = "Whitelist items",
+            description = "Allow certain items to be used on players, separated by commas."
+    )
+    default String whitelistItemsString() {
+        return "neutralising potion, " +
+                "weapon store key, " +
+                "broken shield, " +
+                "half certificate, " +
+                "yellow egg, " +
+                "poisoned egg, " +
+                "spiked/pois. egg, " +
+                "omega egg, " +
+                "old school bond," + 
+                "healing vial(1)," +
+                "healing vial(2)," +
+                "healing vial(3)," +
+                "healing vial(4)," +
+                "scroll";
+    }
+}

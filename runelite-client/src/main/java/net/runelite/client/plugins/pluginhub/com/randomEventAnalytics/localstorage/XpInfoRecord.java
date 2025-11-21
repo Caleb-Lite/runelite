@@ -1,0 +1,69 @@
+package net.runelite.client.plugins.pluginhub.com.randomEventAnalytics.localstorage;
+
+import java.util.HashMap;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import net.runelite.api.Client;
+import net.runelite.api.Skill;
+import net.runelite.client.plugins.xptracker.XpTrackerService;
+
+@Data
+@AllArgsConstructor
+public class XpInfoRecord
+{
+	public final int totalActionsHr;
+	public final int totalXpHr;
+	public final String maximumActionsHrSkillName;
+	public final int maximumActionsHr;
+	public final String maximumXpHrSkillName;
+	public final int maximumXpHr;
+	public final long overallExperience;
+	public final HashMap<String, Integer> xpPerSkill;
+
+	public static XpInfoRecord create(Client client, XpTrackerService xpTrackerService)
+	{
+		Skill maximumActionsHrSkill = Skill.AGILITY;
+		int maximumActionsHr = xpTrackerService.getActionsHr(Skill.AGILITY);
+		Skill maximumXpHrSkill = Skill.AGILITY;
+		int maximumXpHr = xpTrackerService.getXpHr(Skill.AGILITY);
+		int newSkillActionsHr = -1;
+		int newSkillXpHr = -1;
+		HashMap<String, Integer> xpPerSkill = new HashMap<>();
+
+		for (Skill skill : Skill.values())
+		{
+			xpPerSkill.put(skill.getName(), client.getSkillExperience(skill));
+			newSkillActionsHr = xpTrackerService.getActionsHr(skill);
+			newSkillXpHr = xpTrackerService.getXpHr(skill);
+			if (newSkillActionsHr > xpTrackerService.getActionsHr(maximumActionsHrSkill))
+			{
+				maximumActionsHrSkill = skill;
+				maximumActionsHr = newSkillActionsHr;
+			}
+			if (newSkillXpHr > xpTrackerService.getXpHr(maximumXpHrSkill))
+			{
+				maximumXpHrSkill = skill;
+				maximumXpHr = newSkillXpHr;
+			}
+		}
+		// TODO: Poll & Remove/consolidate most of the XP tracking as it's unnecessary.
+		return new XpInfoRecord(
+			0, // deprecated overall
+			0,  // deprecated overall
+			maximumActionsHrSkill.getName(),
+			maximumActionsHr,
+			maximumXpHrSkill.getName(),
+			maximumXpHr,
+			client.getOverallExperience(),
+			xpPerSkill
+		);
+	}
+}
+
+/*
+ * Copyright (c) 2018
+ * 	TheStonedTurtle <https://github.com/TheStonedTurtle>, zmanowar <https://github.com/zmanowar>
+ * All rights reserved.
+ *
+ * Modified source from https://github.com/TheStonedTurtle/Loot-Logger/
+ */

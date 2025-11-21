@@ -1,0 +1,780 @@
+package net.runelite.client.plugins.pluginhub.com.partydefencetracker;
+
+import com.google.inject.Provides;
+import java.awt.Color;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import javax.inject.Inject;
+import lombok.Getter;
+import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.Actor;
+import net.runelite.api.ChatMessageType;
+import net.runelite.api.Client;
+import net.runelite.api.Hitsplat;
+import net.runelite.api.IndexDataBase;
+import net.runelite.api.ItemID;
+import net.runelite.api.NPC;
+import net.runelite.api.Player;
+import net.runelite.api.Skill;
+import net.runelite.api.SpritePixels;
+import net.runelite.api.VarPlayer;
+import net.runelite.api.Varbits;
+import net.runelite.api.coords.WorldPoint;
+import net.runelite.api.events.ActorDeath;
+import net.runelite.api.events.AnimationChanged;
+import net.runelite.api.events.ChatMessage;
+import net.runelite.api.events.GameStateChanged;
+import net.runelite.api.events.GameTick;
+import net.runelite.api.events.GraphicChanged;
+import net.runelite.api.events.HitsplatApplied;
+import net.runelite.api.events.NpcSpawned;
+import net.runelite.api.events.VarbitChanged;
+import net.runelite.api.kit.KitType;
+import net.runelite.client.callback.ClientThread;
+import net.runelite.client.config.ConfigManager;
+import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.game.ItemManager;
+import net.runelite.client.game.SkillIconManager;
+import net.runelite.client.party.PartyService;
+import net.runelite.client.party.WSClient;
+import net.runelite.client.plugins.Plugin;
+import net.runelite.client.plugins.PluginDependency;
+import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.plugins.PluginInstantiationException;
+import net.runelite.client.plugins.PluginManager;
+import net.runelite.client.plugins.party.PartyPlugin;
+import net.runelite.client.plugins.specialcounter.SpecialCounterUpdate;
+import net.runelite.client.plugins.specialcounter.SpecialWeapon;
+import net.runelite.client.ui.overlay.OverlayManager;
+import net.runelite.client.ui.overlay.infobox.InfoBoxManager;
+import net.runelite.client.util.ColorUtil;
+import net.runelite.client.util.Text;
+import org.apache.commons.lang3.ObjectUtils;
+
+@PluginDescriptor(
+	name = "Party Defence Tracker",
+	description = "Calculates the defence based off party specs",
+	tags = {"party", "defence", "tracker", "boosting", "special", "counter"}
+)
+@Slf4j
+@PluginDependency(PartyPlugin.class)
+public class DefenceTrackerPlugin extends Plugin
+{
+	@Inject
+	private Client client;
+
+	@Inject
+	private ClientThread clientThread;
+
+	@Inject
+	private OverlayManager overlayManager;
+
+	@Inject
+	private PartyService partyService;
+
+	@Inject
+	private WSClient wsClient;
+
+	@Inject
+	private DefenceTrackerConfig config;
+
+	@Inject
+	private SkillIconManager skillIconManager;
+
+	@Inject
+	private ItemManager itemManager;
+
+	@Inject
+	private PluginManager pluginManager;
+
+	@Inject
+	private InfoBoxManager infoBoxManager;
+
+	@Inject
+	private CoXLayoutSolver layoutSolver;
+
+	private static final int COX_SCALED_PARTY_SIZE_VARBIT = 9540;
+
+	private String boss = "";
+	private int bossIndex = 0;
+	private double bossDef = -1;
+	private DefenceInfoBox box = null;
+	private VulnerabilityInfoBox vulnBox = null;
+	private SpritePixels vuln = null;
+	private ShadowBarrageInfoBox shadowBarrageBox = null;
+	private SpritePixels shadowBarrage = null;
+	private boolean shadowBarrageHit = false;
+
+	private RedKerisInfoBox redKerisBox = null;
+	@Getter
+	private int redKerisTicks = 0;
+
+	//Copied from special counter
+	//Expected tick the hitsplat will happen on
+	private int hitsplatTick;
+	private Hitsplat lastSpecHitsplat;
+	private NPC lastSpecTarget;
+	private double lastSpecPercent = -1;
+
+	private boolean hmXarpus = false;
+	private boolean bloatDown = false;
+
+	private boolean inCm;
+	private boolean coxModeSet = false;
+
+	private QueuedNpc queuedNpc = null;
+
+	private final List<SpecialCounterUpdate> specialList = new ArrayList<>();
+
+	Map<String, ArrayList<Integer>> bossRegions = new HashMap<>()
+	{{
+		put("The Maiden of Sugadinti", new ArrayList<>(Collections.singletonList(12613)));
+		put("Pestilent Bloat", new ArrayList<>(Collections.singletonList(13125)));
+		put("Nylocas Vasilias", new ArrayList<>(Collections.singletonList(13122)));
+		put("Sotetseg", new ArrayList<>(Arrays.asList(13123, 13379)));
+		put("Xarpus", new ArrayList<>(Collections.singletonList(12612)));
+		put("Zebak", new ArrayList<>(Collections.singletonList(15700)));
+		put("Kephri", new ArrayList<>(Collections.singletonList(14164)));
+		put("Ba-Ba", new ArrayList<>(Collections.singletonList(15188)));
+		put("Akkha", new ArrayList<>(Collections.singletonList(14676)));
+		put("Akkha's Shadow", new ArrayList<>(Collections.singletonList(14676)));
+		put("<col=00ffff>Obelisk</col>", new ArrayList<>(Collections.singletonList(15184)));
+		put("Tumeken's Warden", new ArrayList<>(Collections.singletonList(15696)));
+		put("Elidinis' Warden", new ArrayList<>(Collections.singletonList(15696)));
+		put("<col=00ffff>Core</col>", new ArrayList<>(Arrays.asList(15184, 15696)));
+		put("Alchemical Hydra", new ArrayList<>(Collections.singletonList(5536)));
+		put("Nex", new ArrayList<>(Collections.singletonList(11601)));
+		put("Phantom Muspah", new ArrayList<>(Collections.singletonList(11330)));
+		put("Skotizo", new ArrayList<>(Collections.singletonList(9048)));
+		put("TzKal-Zuk", new ArrayList<>(Collections.singletonList(9043)));
+		put("TzTok-Jad", new ArrayList<>(Collections.singletonList(9551)));
+		put("Vorkath", new ArrayList<>(Collections.singletonList(9023)));
+		put("Yama", new ArrayList<>(Collections.singletonList(6045)));
+		put("Zulrah", new ArrayList<>(Arrays.asList(9007, 9008)));
+	}};
+
+	private final Set<String> coxBosses = new HashSet<>(List.of("Abyssal portal", "Deathly mage", "Deathly ranger", "Great Olm", "Great Olm (Left claw)", "Great Olm (Right claw", "Ice demon", "Skeletal Mystic", "Tekton", "Vasa Nistirio", "Lizardman shaman"));
+  	private final Set<String> coxBossesSpecialOffensiveScaling = new HashSet<>(List.of("Abyssal portal", "Deathly ranger"));
+
+	@Provides
+	DefenceTrackerConfig provideConfig(ConfigManager configManager)
+	{
+		return configManager.getConfig(DefenceTrackerConfig.class);
+	}
+
+	protected void startUp() throws Exception
+	{
+		reset();
+		enableRequiredPlugins("Party");
+		enableRequiredPlugins("Special Attack Counter");
+		wsClient.registerMessage(DefenceTrackerUpdate.class);
+	}
+
+	protected void shutDown() throws Exception
+	{
+		reset();
+		wsClient.unregisterMessage(DefenceTrackerUpdate.class);
+	}
+
+	protected void reset()
+	{
+		infoBoxManager.removeInfoBox(box);
+		infoBoxManager.removeInfoBox(vulnBox);
+		infoBoxManager.removeInfoBox(redKerisBox);
+		infoBoxManager.removeInfoBox(shadowBarrageBox);
+		boss = "";
+		bossIndex = 0;
+		bossDef = -1;
+		box = null;
+		vulnBox = null;
+		vuln = null;
+		redKerisBox = null;
+		redKerisTicks = 0;
+		shadowBarrageBox = null;
+		shadowBarrage = null;
+		shadowBarrageHit = false;
+		bloatDown = false;
+		queuedNpc = null;
+	}
+
+	@Subscribe
+	public void onAnimationChanged(AnimationChanged e)
+	{
+		int animation = e.getActor().getAnimation();
+
+		if (e.getActor() instanceof Player && e.getActor() != null && client.getLocalPlayer() != null && e.getActor().getName() != null)
+		{
+			if (e.getActor().getName().equals(client.getLocalPlayer().getName()))
+			{
+				if (animation == 1816 && boss.equalsIgnoreCase("sotetseg") && inBossRegion())
+				{
+					infoBoxManager.removeInfoBox(box);
+					bossDef = 200;
+				}
+			}
+		}
+
+		if (e.getActor() instanceof NPC && e.getActor().getName() != null)
+		{
+			if (e.getActor().getName().equalsIgnoreCase("pestilent bloat"))
+			{
+				bloatDown = animation == 8082;
+			}
+			//Enraged Wardens
+			else if (animation == 9685 && (boss.equalsIgnoreCase("Tumeken's Warden") || boss.equalsIgnoreCase("Elidinis' Warden")))
+			{
+				infoBoxManager.removeInfoBox(box);
+				bossDef = 60;
+			}
+		}
+	}
+
+	private void processSpecialAttack(SpecialCounterUpdate e)
+	{
+		int hit = e.getHit();
+		int world = e.getWorld();
+		SpecialWeapon weapon = e.getWeapon();
+		int index = e.getNpcIndex();
+		NPC npc = client.getTopLevelWorldView().npcs().byIndex(index);
+
+		clientThread.invoke(() ->
+		{
+			if ((npc != null && npc.getName() != null && BossInfo.getBoss(npc.getName()) != null) || bossIndex == index)
+			{
+				if (bossIndex != index)
+				{
+					String bossName = npc.getName();
+
+					if (!boss.equalsIgnoreCase(bossName) || (bossName.contains("Tekton") && !boss.equalsIgnoreCase("Tekton")))
+					{
+						baseDefence(bossName, index);
+						calculateQueue(index);
+					}
+				}
+
+				if (inBossRegion() && world == client.getWorld())
+				{
+					calculateDefence(weapon, hit);
+					updateDefInfobox();
+				}
+			}
+			else
+			{
+				if (queuedNpc == null || queuedNpc.index != index)
+				{
+					queuedNpc = new QueuedNpc(index);
+				}
+				queuedNpc.queuedSpecs.add(new QueuedNpc.QueuedSpec(weapon, hit));
+			}
+		});
+	}
+
+	@Subscribe
+	public void onGameTick(GameTick e)
+	{
+		for (SpecialCounterUpdate specialCounterUpdate : specialList)
+		{
+			processSpecialAttack(specialCounterUpdate);
+		}
+		specialList.clear();
+		if (partyService.isInParty())
+		{
+			for (NPC n : client.getTopLevelWorldView().npcs())
+			{
+				if (n != null && n.getName() != null && (n.getName().equalsIgnoreCase(boss) || (n.getName().contains("Tekton") && boss.equalsIgnoreCase("Tekton")))
+					&& (n.isDead() || n.getHealthRatio() == 0))
+				{
+					partyService.send(new DefenceTrackerUpdate(n.getName(), n.getIndex(), false, client.getWorld(), ""));
+				}
+			}
+		}
+
+		layoutSolver.onGameTick(e);
+
+		if (!coxModeSet && client.getVarbitValue(Varbits.IN_RAID) == 1)
+		{
+			inCm = layoutSolver.isCM();
+			coxModeSet = true;
+		}
+
+		if (redKerisTicks > 0)
+		{
+			redKerisTicks--;
+			if (redKerisTicks == 0)
+			{
+				infoBoxManager.removeInfoBox(redKerisBox);
+			}
+		}
+
+		//Copied from special counter
+		if (lastSpecHitsplat != null && lastSpecTarget != null)
+		{
+			if (lastSpecHitsplat.getAmount() > 0 && partyService.isInParty())
+			{
+				partyService.send(new DefenceTrackerUpdate(lastSpecTarget.getName(), lastSpecTarget.getIndex(), true, client.getWorld(), "keris"));
+			}
+			lastSpecHitsplat = null;
+			lastSpecTarget = null;
+		}
+	}
+
+	@Subscribe
+	public void onHitsplatApplied(HitsplatApplied e)
+	{
+		Actor target = e.getActor();
+		Hitsplat hitsplat = e.getHitsplat();
+		if (hitsplat.isMine() && target instanceof NPC && lastSpecTarget != null && hitsplatTick == client.getTickCount())
+		{
+			NPC npc = (NPC) target;
+			String name = npc.getName();
+			if (name != null && (BossInfo.getBoss(name) != null || bossIndex == npc.getIndex()))
+			{
+				// The weapon hitsplat is always last, after other hitsplats which occur on the same tick such as from venge or thralls.
+				lastSpecHitsplat = hitsplat;
+			}
+		}
+	}
+
+
+	@Subscribe
+	public void onNpcSpawned(NpcSpawned e)
+	{
+		NPC npc = e.getNpc();
+		if (npc.getName() != null && BossInfo.getBoss(npc.getName()) != null)
+		{
+			hmXarpus = npc.getId() >= 10770 && npc.getId() <= 10772;
+		}
+	}
+
+	@Subscribe
+	public void onActorDeath(ActorDeath e)
+	{
+		if (e.getActor() instanceof NPC && e.getActor().getName() != null && client.getLocalPlayer() != null && partyService.isInParty())
+		{
+			if (e.getActor().getName().equalsIgnoreCase(boss) || (e.getActor().getName().contains("Tekton") && boss.equalsIgnoreCase("Tekton")))
+			{
+				partyService.send(new DefenceTrackerUpdate(e.getActor().getName(), ((NPC) e.getActor()).getIndex(), false, client.getWorld(), ""));
+			}
+		}
+	}
+
+	@Subscribe
+	public void onSpecialCounterUpdate(SpecialCounterUpdate e)
+	{
+		if (e.getWeapon() == SpecialWeapon.ELDER_MAUL)
+		{
+			specialList.add(0, e);
+		}
+		else
+		{
+			specialList.add(e);
+		}
+	}
+
+	@Subscribe
+	public void onDefenceTrackerUpdate(DefenceTrackerUpdate e)
+	{
+		int world = e.getWorld();
+		clientThread.invoke(() ->
+		{
+			if (!e.isAlive())
+			{
+				reset();
+			}
+			else
+			{
+				if (inBossRegion() && world == client.getWorld())
+				{
+					if (e.getWeapon().equals("vuln"))
+					{
+						if (!boss.equalsIgnoreCase(e.getBoss()) || (e.getBoss().contains("Tekton") && !boss.equalsIgnoreCase("Tekton")))
+						{
+							baseDefence(e.getBoss(), e.getIndex());
+							calculateQueue(e.getIndex());
+						}
+
+						if (config.vulnerability())
+						{
+							infoBoxManager.removeInfoBox(vulnBox);
+							IndexDataBase sprite = client.getIndexSprites();
+							vuln = Objects.requireNonNull(client.getSprites(sprite, 56, 0))[0];
+							vulnBox = new VulnerabilityInfoBox(vuln.toBufferedImage(), this);
+							vulnBox.setTooltip(ColorUtil.wrapWithColorTag(Text.removeTags(boss), Color.WHITE));
+							infoBoxManager.addInfoBox(vulnBox);
+						}
+						bossDef -= bossDef * .1;
+
+						updateDefInfobox();
+					}
+					else if (e.getWeapon().equals("keris"))
+					{
+						redKerisTicks = 9;
+						if (config.redKeris())
+						{
+							infoBoxManager.removeInfoBox(redKerisBox);
+							redKerisBox = new RedKerisInfoBox(itemManager.getImage(ItemID.KERIS_PARTISAN_OF_CORRUPTION), this);
+							redKerisBox.setTooltip(ColorUtil.wrapWithColorTag(e.getBoss(), Color.WHITE));
+							infoBoxManager.addInfoBox(redKerisBox);
+						}
+					} else if (e.getWeapon().equals("shadowBarrage") && !shadowBarrageHit)
+					{
+						if (!boss.equalsIgnoreCase(e.getBoss()) || (e.getBoss().contains("Tekton") && !boss.equalsIgnoreCase("Tekton")))
+						{
+							baseDefence(e.getBoss(), e.getIndex());
+							calculateQueue(e.getIndex());
+						}
+
+						if (config.shadowBarrage())
+						{
+							infoBoxManager.removeInfoBox(shadowBarrageBox);
+							shadowBarrageBox = new ShadowBarrageInfoBox(itemManager.getImage(ItemID.SHADOW_ANCIENT_SCEPTRE), this);
+							shadowBarrageBox.setTooltip(ColorUtil.wrapWithColorTag(e.getBoss(), Color.WHITE));
+							infoBoxManager.addInfoBox(shadowBarrageBox);
+						}
+						shadowBarrageHit = true; // non-stackable reduction
+						bossDef -= bossDef * .15;
+
+						updateDefInfobox();
+					}
+				}
+			}
+		});
+	}
+
+	@Subscribe
+	public void onChatMessage(ChatMessage event)
+	{
+		if (event.getType() == ChatMessageType.FRIENDSCHATNOTIFICATION)
+		{
+			if (Text.removeTags(event.getMessage()).equals("The raid has begun!") && client.getVarbitValue(Varbits.IN_RAID) == 1)
+			{
+				// Determine if in challege mode or regular
+				inCm = layoutSolver.isCM();
+				coxModeSet = true;
+			}
+		}
+	}
+
+	@Subscribe
+	private void onVarbitChanged(VarbitChanged e)
+	{
+		if (!inBossRegion())
+		{
+			reset();
+		}
+
+		if (client.getVarbitValue(Varbits.IN_RAID) != 1 && isInCoxLobby())
+		{
+			inCm = false;
+			coxModeSet = false;
+		}
+
+		layoutSolver.onVarbitChanged(e);
+
+		//Copied from special counter plugin
+		if (e.getVarpId() == VarPlayer.SPECIAL_ATTACK_PERCENT)
+		{
+			if (client.getLocalPlayer() != null && client.getLocalPlayer().getPlayerComposition() != null)
+			{
+				int weapon = client.getLocalPlayer().getPlayerComposition().getEquipmentId(KitType.WEAPON);
+				if (weapon == ItemID.KERIS_PARTISAN_OF_CORRUPTION && (e.getValue() == lastSpecPercent - 750 || e.getValue() == lastSpecPercent - 375))
+				{
+					// This event runs prior to player and npc updating, making getInteracting() too early to call..
+					// defer this with invokeLater(), but note that this will run after incrementing the server tick counter
+					// so we capture the current server tick counter here for use in computing the final hitsplat tick
+					final int serverTicks = client.getTickCount();
+					clientThread.invokeLater(() ->
+					{
+						Actor target = client.getLocalPlayer().getInteracting();
+						lastSpecTarget = target instanceof NPC ? (NPC) target : null;
+						hitsplatTick = serverTicks + 1; //red keris has hit delay 1
+					});
+				}
+			}
+			lastSpecPercent = e.getValue();
+		}
+	}
+
+	@Subscribe
+	public void onGraphicChanged(GraphicChanged e)
+	{
+		if (!(e.getActor() instanceof NPC) || e.getActor().getName() == null || !partyService.isInParty())
+		{
+			return;
+		}
+
+		NPC npc = (NPC) e.getActor();
+
+		BossInfo bossName = BossInfo.getBoss(npc.getName());
+		if (bossName == null)
+		{
+			return;
+		}
+
+		final int VULNERABILITY_SPOT_ANIM = 169;
+		final int SHADOW_SCEPTRE_SPOT_ANIM = 383;
+		final int SHADOW_SCEPTRE_ID = ItemID.SHADOW_ANCIENT_SCEPTRE_28266;
+
+		if (npc.hasSpotAnim(VULNERABILITY_SPOT_ANIM))
+		{
+			partyService.send(new DefenceTrackerUpdate(npc.getName(), npc.getIndex(), true, client.getWorld(), "vuln"));
+		}
+		else if (npc.hasSpotAnim(SHADOW_SCEPTRE_SPOT_ANIM))
+		{
+			int equippedWeapon = ObjectUtils.defaultIfNull(
+					client.getLocalPlayer().getPlayerComposition().getEquipmentId(KitType.WEAPON), -1
+			);
+			if (equippedWeapon == SHADOW_SCEPTRE_ID)
+			{
+				partyService.send(new DefenceTrackerUpdate(npc.getName(), npc.getIndex(), true, client.getWorld(), "shadowBarrage"));
+			}
+		}
+	}
+
+
+
+	@Subscribe
+	protected void onGameStateChanged(GameStateChanged e)
+	{
+		layoutSolver.onGameStateChanged(e);
+	}
+
+	private void baseDefence(String bossName, int index)
+	{
+		boss = bossName;
+		bossIndex = index;
+		bossDef = BossInfo.getBaseDefence(boss);
+
+		if (boss.equalsIgnoreCase("Xarpus") && hmXarpus)
+		{
+			bossDef = 200;
+		}
+		else if (coxBosses.contains(boss))
+		{
+			bossDef = getCoxScaledDefenceLevel(bossName, (int) bossDef);
+		}
+	}
+
+	private int getCoxScaledDefenceLevel(String bossName, int baseDef)
+	{
+		int partySize = getCoxPartySize();
+		baseDef = (int) (baseDef * (((int) Math.sqrt(partySize - 1) + ((partySize - 1) * 7 / 10 + 100)) / 100.0));
+		if (inCm)
+		{
+			baseDef = (int) (baseDef * (bossName.contains("Tekton") ? partySize > 3 ? 1.35 : 1.2 : 1.5));
+		}
+		return baseDef;
+	}
+
+	private int getScaledMagicLevel()
+	{
+		int scaledMagicLevel = (int) BossInfo.getBaseMagic(boss);
+		if (coxBosses.contains(boss))
+		{
+			int partySize = getCoxPartySize();
+			if (coxBossesSpecialOffensiveScaling.contains(boss))
+			{
+				scaledMagicLevel = (int) (scaledMagicLevel * (((int) Math.sqrt(partySize - 1) + ((partySize - 1) * 7 / 10 + 100)) / 100.0));
+			}
+			else
+			{
+				scaledMagicLevel = scaledMagicLevel * (((int) (Math.sqrt(partySize - 1))) * 7 + partySize + 99) / 100;
+			}
+			if (inCm)
+			{
+				scaledMagicLevel = (int) (1.5 * scaledMagicLevel);
+			}
+		}
+		return scaledMagicLevel;
+	}
+
+	private void calculateDefence(SpecialWeapon weapon, int hit)
+	{
+		switch (weapon)
+		{
+			case DRAGON_WARHAMMER:
+				if (hit == 0)
+				{
+					if (client.getVarbitValue(Varbits.IN_RAID) == 1 && boss.equalsIgnoreCase("Tekton"))
+					{
+						bossDef -= bossDef * .05;
+					}
+				}
+				else
+				{
+					bossDef -= bossDef * .30;
+				}
+				break;
+			case ELDER_MAUL:
+				if (hit == 0)
+				{
+					if (client.getVarbitValue(Varbits.IN_RAID) == 1 && boss.equalsIgnoreCase("Tekton"))
+					{
+						bossDef -= bossDef * .05;
+					}
+				}
+				else
+				{
+					bossDef -= bossDef * .35;
+				}
+				break;
+			case BANDOS_GODSWORD:
+				if (hit == 0)
+				{
+					if (client.getVarbitValue(Varbits.IN_RAID) == 1 && boss.equalsIgnoreCase("Tekton"))
+					{
+						bossDef -= 10;
+					}
+				}
+				else
+				{
+					if (boss.equalsIgnoreCase("Corporeal Beast") || (inBossRegion() && boss.equalsIgnoreCase("Pestilent Bloat") && !bloatDown))
+					{
+						bossDef -= hit * 2;
+					}
+					else
+					{
+						bossDef -= hit;
+					}
+				}
+				break;
+			case ARCLIGHT:
+			case DARKLIGHT:
+				if (hit > 0)
+				{
+					if (boss.equalsIgnoreCase("K'ril Tsutsaroth") || boss.equalsIgnoreCase("Abyssal Sire") || boss.equalsIgnoreCase("Yama"))
+					{
+						bossDef -= BossInfo.getBaseDefence(boss) * .10;
+					}
+					else
+					{
+						bossDef -= BossInfo.getBaseDefence(boss) * .05;
+					}
+				}
+				break;
+			case EMBERLIGHT:
+				if (hit > 0)
+				{
+					if (boss.equalsIgnoreCase("K'ril Tsutsaroth") || boss.equalsIgnoreCase("Abyssal Sire") || boss.equalsIgnoreCase("Yama"))
+					{
+						bossDef -= BossInfo.getBaseDefence(boss) * .15;
+					}
+					else
+					{
+						bossDef -= BossInfo.getBaseDefence(boss) * .05;
+					}
+				}
+				break;
+			case BARRELCHEST_ANCHOR:
+				bossDef -= hit * .10;
+				break;
+			case BONE_DAGGER:
+			case DORGESHUUN_CROSSBOW:
+				if (bossDef >= BossInfo.getBaseDefence(boss))
+				{
+					bossDef -= hit;
+				}
+				break;
+			case ACCURSED_SCEPTRE:
+				if (hit > 0)
+				{
+					if (bossDef > (BossInfo.getBaseDefence(boss) * .85))
+					{
+						bossDef = BossInfo.getBaseDefence(boss) * .85;
+					}
+				}
+				break;
+			case TONALZTICS_OF_RALOS:
+				for (int i = 0; i < hit; i++)
+				{
+					bossDef -= (int) (getScaledMagicLevel() * .1);
+				}
+				break;
+		}
+
+		if (boss.equalsIgnoreCase("Sotetseg") && bossDef < 100)
+		{
+			bossDef = 100;
+		}
+		else if (boss.equalsIgnoreCase("Yama") && bossDef < 145)
+		{
+			bossDef = 145;
+		}
+		else if (bossDef < 0)
+		{
+			bossDef = 0;
+		}
+	}
+
+	private void calculateQueue(int index)
+	{
+		if (queuedNpc != null)
+		{
+			if (queuedNpc.index == index)
+			{
+				for (QueuedNpc.QueuedSpec spec : queuedNpc.queuedSpecs)
+				{
+					calculateDefence(spec.weapon, spec.hit);
+				}
+			}
+			queuedNpc = null;
+		}
+	}
+
+	private void updateDefInfobox()
+	{
+		infoBoxManager.removeInfoBox(box);
+		box = new DefenceInfoBox(skillIconManager.getSkillImage(Skill.DEFENCE), this, Math.round(bossDef), config);
+		box.setTooltip(ColorUtil.wrapWithColorTag(boss, Color.WHITE));
+		infoBoxManager.addInfoBox(box);
+	}
+
+	private boolean inBossRegion()
+	{
+		if (client.getLocalPlayer() != null && bossRegions.containsKey(boss))
+		{
+			WorldPoint wp = WorldPoint.fromLocalInstance(client, client.getLocalPlayer().getLocalLocation());
+			if (wp != null)
+			{
+				return bossRegions.get(boss).contains(wp.getRegionID());
+			}
+		}
+		return client.getVarbitValue(Varbits.IN_RAID) == 1 || !coxBosses.contains(boss);
+	}
+
+	public boolean isInCoxLobby()
+	{
+		int[] regions = client.getTopLevelWorldView().getMapRegions();
+		return regions != null && regions.length > 0 && Arrays.stream(regions).anyMatch((s) -> s == 4919);
+	}
+
+	private int getCoxPartySize()
+	{
+		return client.getVarbitValue(COX_SCALED_PARTY_SIZE_VARBIT);
+	}
+
+	public void enableRequiredPlugins(String pluginName)
+	{
+		try
+		{
+			final Optional<Plugin> plugin = pluginManager.getPlugins().stream().filter(p -> p.getName().equals(pluginName)).findFirst();
+			if (plugin.isPresent() && !pluginManager.isPluginEnabled(plugin.get()))
+			{
+				pluginManager.setPluginEnabled(plugin.get(), true);
+				pluginManager.startPlugin(plugin.get());
+			}
+		}
+		catch (PluginInstantiationException ex)
+		{
+			log.error("error starting " + pluginName + " plugin", ex);
+		}
+	}
+}

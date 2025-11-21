@@ -1,0 +1,1716 @@
+package net.runelite.client.plugins.pluginhub.com.chatpanel;
+
+import net.runelite.api.Client;
+import net.runelite.client.RuneLite;
+import net.runelite.client.config.ChatColorConfig;
+import net.runelite.client.ui.ColorScheme;
+import net.runelite.client.ui.PluginPanel;
+
+import javax.inject.Inject;
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import java.awt.*;
+import java.awt.event.*;
+import javax.swing.filechooser.FileNameExtensionFilter;
+import javax.swing.text.*;
+
+import net.runelite.client.util.ImageUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import java.awt.IllegalComponentStateException;
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.FileInputStream;
+import java.io.PrintWriter;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.Objects;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+
+public class ChatPanelSidebar extends PluginPanel {
+    private final JTextPane publicChatArea;
+    private final JTextPane privateChatArea;
+    private final JTextPane clanChatArea;
+    private final JTextPane friendsChatArea;
+    private final JTextPane allChatArea;
+    private final JTextPane customChatArea;
+    private final JTextPane customChatArea2;
+    private final JTextPane customChatArea3;
+    private final JTextPane gameChatArea;
+    private final JTextPane combatArea;
+    private final JTabbedPane tabbedPane;
+    private final ChatPanelConfig config;
+    private static final Logger logger = LoggerFactory.getLogger(ChatPanelSidebar.class);
+    private boolean isPopout = false;
+    JFrame popoutFrame;
+    private JFrame popoutTab;
+    private JButton popoutButton;
+    private JButton popinButton;
+    private JButton popinButton2;
+    private boolean overrideUndecorated;
+    private static final int AUTO_POP_DELAY_MS = 180; //This prevents the pop out window from messing up RL's icon.
+    private Timer autoPopTimer;
+    private final List<JFrame> popoutTabs = new ArrayList<>();
+    private final Client client;
+    @Inject
+    private final ChatColorConfig chatColorConfig;
+
+    public ChatPanelSidebar(ChatPanelConfig config, Client client, ChatColorConfig chatColorConfig) {
+        this.config = config;
+        this.client = client;
+        this.chatColorConfig = chatColorConfig;
+        setLayout(new BorderLayout());
+        popoutButton = new JButton("Pop out");
+        popoutButton.addActionListener(e -> togglePopout());
+        if (!config.hidepopoutButtons()) {
+            popoutButton.setVisible(true);
+            add(popoutButton, BorderLayout.SOUTH);
+        }
+
+        if (!CHAT_PANEL_DIR.exists()) {
+               createDirectory();
+        }
+
+        publicChatArea = createTextPane();
+        privateChatArea = createTextPane();
+        clanChatArea = createTextPane();
+        friendsChatArea = createTextPane();
+        gameChatArea = createTextPane();
+        allChatArea = createTextPane();
+        customChatArea = createTextPane();
+        customChatArea2 = createTextPane();
+        customChatArea3 = createTextPane();
+        combatArea = createTextPane();
+
+        tabbedPane = new JTabbedPane();
+        createTabs();
+
+        add(tabbedPane, BorderLayout.CENTER);
+        updateChatStyles();
+        updateFonts();
+        tabbedPane.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                SwingUtilities.isMiddleMouseButton(e);
+                if (SwingUtilities.isRightMouseButton(e)) {
+                    int tabIndex = tabbedPane.indexAtLocation(e.getX(), e.getY());
+                    if (tabIndex != -1) {
+                        tabbedPane.setSelectedIndex(tabIndex);
+                        tabbedPane.setBackgroundAt(tabIndex, ColorScheme.DARK_GRAY_COLOR);
+                        showPopupMenu(e.getComponent(), e.getX(), e.getY(), tabIndex);
+                    }
+                }
+                if (SwingUtilities.isMiddleMouseButton(e)) {
+                    int tabIndex = tabbedPane.indexAtLocation(e.getX(), e.getY());
+                    if (tabIndex != -1) {
+                        popOutTab(tabIndex);
+                    }
+                }
+                if (SwingUtilities.isLeftMouseButton(e)) {
+                    int tabIndex = tabbedPane.indexAtLocation(e.getX(), e.getY());
+                    if (tabIndex != -1) {
+                        tabbedPane.setBackgroundAt(tabIndex, ColorScheme.DARK_GRAY_COLOR);
+                    }
+                }
+            }
+        });
+        if (config.AutoPop() && !isPopout()) {
+            autoPopTimer = new Timer(AUTO_POP_DELAY_MS, new ActionListener() {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    togglePopout();
+                    autoPopTimer.stop();
+                }
+            });
+            autoPopTimer.start();
+        }
+    }
+
+    private void showPopupMenu(Component component, int x, int y, int tabIndex) {
+        JPopupMenu popupMenu = new JPopupMenu();
+
+        JMenuItem popoutItem = new JMenuItem("Pop Out");
+        popoutItem.addActionListener(e -> popOutTab(tabIndex));
+        popupMenu.add(popoutItem);
+
+        JMenuItem resetHistoryItem = new JMenuItem("Reset History");
+        resetHistoryItem.addActionListener(e -> resetTabHistory(tabIndex));
+        popupMenu.add(resetHistoryItem);
+
+        JMenuItem exportItem = new JMenuItem("Export Log");
+        exportItem.addActionListener(e -> exportChatLog(tabIndex));
+        popupMenu.add(exportItem);
+
+        JMenuItem searchItem = new JMenuItem("Search");
+        popupMenu.add(searchItem);
+        searchItem.addActionListener(e -> {
+            ChatPanelSearch.SearchWindow searchWindow = new ChatPanelSearch.SearchWindow(popoutFrame, tabbedPane, tabIndex, getParent());
+            searchWindow.setVisible(true);
+        });
+
+        String tabTitle = tabbedPane.getTitleAt(tabIndex);
+        if (privateChatTabs.containsKey(tabTitle)|| ("Private".equals(tabTitle) && !config.showPrivateChat())) {
+            JMenuItem closeTabItem = new JMenuItem("Close Tab");
+            closeTabItem.addActionListener(e -> {
+                tabbedPane.remove(tabIndex);
+                privateChatTabs.remove(tabTitle);
+                privateChatNames.remove(tabTitle);
+            });
+            popupMenu.add(closeTabItem);
+        }
+        popupMenu.show(component, x, y);
+    }
+
+    private void createTabs() {
+        tabbedPane.removeAll();
+
+        if (config.showPublicChat()) {
+            tabbedPane.addTab("Public", createScrollPane(publicChatArea));
+            tabbedPane.setToolTipTextAt(tabbedPane.indexOfTab("Public"), "Right click for options. MMB to pop out tab");
+        }
+
+        if (config.showPrivateChat() || maxPMmessageshown || mergedPMs) {
+            tabbedPane.addTab("Private", createScrollPane(privateChatArea));
+            tabbedPane.setToolTipTextAt(tabbedPane.indexOfTab("Private"), "Right click for options. MMB to pop out tab");
+        }
+
+        if (config.showClanChat()) {
+            tabbedPane.addTab("Clan", createScrollPane(clanChatArea));
+            tabbedPane.setToolTipTextAt(tabbedPane.indexOfTab("Clan"), "Right click for options. MMB to pop out tab");
+        }
+
+        if (config.showGameChat()) {
+            tabbedPane.addTab("Game", createScrollPane(gameChatArea));
+            tabbedPane.setToolTipTextAt(tabbedPane.indexOfTab("Game"), "Right click for options. MMB to pop out tab");
+        }
+
+        if (config.showAllChat()) {
+            tabbedPane.addTab("All", createScrollPane(allChatArea));
+            tabbedPane.setToolTipTextAt(tabbedPane.indexOfTab("All"), "Right click for options. MMB to pop out tab");
+        }
+
+        if (config.showFriendsChat()) {
+            tabbedPane.addTab("Friends", createScrollPane(friendsChatArea));
+            tabbedPane.setToolTipTextAt(tabbedPane.indexOfTab("Friends"), "Right click for options. MMB to pop out tab");
+        }
+
+        if (config.showCustomChat()) {
+            String tabTitle = config.custom1Tabname();
+            tabbedPane.addTab(tabTitle, createScrollPane(customChatArea));
+            tabbedPane.setToolTipTextAt(tabbedPane.indexOfTab(tabTitle), "Right click for options. MMB to pop out tab");
+        }
+
+        if (config.showCustom2Chat()) {
+            String tabTitle = config.custom2Tabname();
+            tabbedPane.addTab(tabTitle, createScrollPane(customChatArea2));
+            tabbedPane.setToolTipTextAt(tabbedPane.indexOfTab(tabTitle), "Right click for options. MMB to pop out tab");
+        }
+
+        if (config.showCustom3Chat()) {
+            String tabTitle = config.custom3Tabname();
+            tabbedPane.addTab(tabTitle, createScrollPane(customChatArea3));
+            tabbedPane.setToolTipTextAt(tabbedPane.indexOfTab(tabTitle), "Right click for options. MMB to pop out tab");
+        }
+
+        if (config.showCombatTab()) {
+            String tabTitle = "Combat";
+            tabbedPane.addTab(tabTitle, createScrollPane(combatArea));
+            tabbedPane.setToolTipTextAt(tabbedPane.indexOfTab(tabTitle), "Right click for options. MMB to pop out tab");
+        }
+
+        for (Map.Entry<String, JTextPane> entry : privateChatTabs.entrySet()) {
+            String tabName = entry.getKey();
+            JTextPane chatArea = entry.getValue();
+            tabbedPane.addTab(tabName, createScrollPane(chatArea));
+            tabbedPane.setToolTipTextAt(tabbedPane.indexOfTab(tabName), "Right click for options or to remove tab. MMB to pop out tab");
+        }
+    }
+
+
+    public final List<String> privateChatNames = new ArrayList<>(); // List to store private chat names for dropdown menu in Chat Out (future).
+    private final Map<String, JTextPane> privateChatTabs = new HashMap<>();
+    boolean maxPMmessageshown = false;
+
+    private JTextPane createPrivateChatTabs(String name) {
+        String tabName;
+        if (name.startsWith("To ")) {
+            tabName = name.substring(3);
+        } else if (name.startsWith("From ")) {
+            tabName = name.substring(5);
+        } else {
+            tabName = name;
+        }
+
+        JTextPane pmTab = privateChatTabs.get(tabName);
+
+        if (pmTab == null) {
+            if (privateChatTabs.size() >= config.maxPMTabs()) {
+                if (!maxPMmessageshown){
+                    JOptionPane.showMessageDialog(this, "Maximum number of PM tabs reached, new PMs will be sent to Private tab. \nYou can right-click > 'Remove tab' on a PM tab to create room for more PM tabs.", "Too many friends", JOptionPane.WARNING_MESSAGE);
+                    maxPMmessageshown = true;
+                }
+                if (tabbedPane.indexOfTab("Private") == -1 && popoutTabs.stream().noneMatch(f -> "Private".equals(f.getTitle()))) {
+                    tabbedPane.addTab("Private", createScrollPane(privateChatArea));
+                    tabbedPane.setToolTipTextAt(tabbedPane.indexOfTab("Private"), "Right click for options. MMB to pop out tab");
+                }
+               return privateChatArea;
+            }
+            pmTab = createTextPane();
+            privateChatTabs.put(tabName, pmTab);
+            tabbedPane.addTab(tabName, createScrollPane(pmTab));
+            tabbedPane.setToolTipTextAt(tabbedPane.indexOfTab(tabName), "Right click for options or to remove tab. MMB to pop out tab");
+            updateChatStyles();
+            updateFonts();
+            maxPMmessageshown = false;
+        }
+
+        return pmTab;
+    }
+
+    private String[] reMessage(String line) { // This is literally just so people don't lose PMs when toggling the Split PMs setting..... Seems crazy... And it keeps pretty formatting too... XD
+        String extractedTimestamp;
+        String nameWithPrefix;
+        String message;
+        String eventType = "PRIVATECHAT";
+
+        int toIndex = line.indexOf("[To");
+        int fromIndex = line.indexOf("[From");
+        int prefixIndex = (toIndex != -1) ? toIndex : fromIndex;
+
+        if (toIndex != -1 && fromIndex != -1) { // This is in case the message actually contains '[To' or '[From'.
+            prefixIndex = Math.min(toIndex, fromIndex);
+        }
+
+        if (prefixIndex == -1) {
+            return null;
+        } else {
+            if  (prefixIndex == toIndex) {
+                eventType = "PRIVATECHATOUT";
+            }
+        }
+
+        extractedTimestamp = line.substring(0, prefixIndex).trim();
+        if (extractedTimestamp.startsWith("[") && extractedTimestamp.endsWith("]")) {
+            extractedTimestamp = extractedTimestamp.substring(1, extractedTimestamp.length() - 1);
+        }
+
+        int nameEndIndex = line.indexOf("]:", prefixIndex);
+        if (nameEndIndex == -1) {
+            return null;
+        }
+
+        nameWithPrefix = line.substring(prefixIndex + 1, nameEndIndex).trim();
+        message = line.substring(nameEndIndex + 2).trim();
+        return new String[]{extractedTimestamp, nameWithPrefix, message, eventType};
+    }
+
+    void splitIntoPMTabs() {
+        try {
+            String text = privateChatArea.getStyledDocument().getText(0, privateChatArea.getStyledDocument().getLength());
+            for (String line : text.split("\n")) {
+                String[] chatLineData = reMessage(line);
+                if (chatLineData != null) {
+                    String timestamp = chatLineData[0];
+                    String name = chatLineData[1];
+                    String message = chatLineData[2];
+                    String eventType = chatLineData[3];
+                    String notifier = "";
+
+                    JTextPane chatArea = createPrivateChatTabs(name);
+                    addMessageToChatArea(chatArea, timestamp, name, message, eventType, notifier);
+                    updateChatStyles();
+                    updateFonts();
+                    mergedPMs = false;
+                }
+            }
+        } catch (BadLocationException ignored) {}
+        privateChatArea.setText("");
+    }
+
+    boolean mergedPMs = false;
+    void mergePMTabs() {
+       for (Map.Entry<String, JTextPane> entry : privateChatTabs.entrySet()) {
+           JTextPane chatArea = entry.getValue();
+           try {
+               String text = chatArea.getStyledDocument().getText(0, chatArea.getStyledDocument().getLength());
+               for (String line : text.split("\n")) {
+                   String[] chatLineData = reMessage(line);
+                   if (chatLineData != null) {
+                       String timestamp = chatLineData[0];
+                       String name = chatLineData[1];
+                       String message = chatLineData[2];
+                       String eventType = chatLineData[3];
+                       if (!privateChatArea.getText().contains(line)) {
+                           String notifier = "";
+                           addMessageToChatArea(privateChatArea, timestamp, name, message, eventType, notifier);
+                       }
+                       updateChatStyles();
+                       updateFonts();
+                       mergedPMs = true;
+                   }
+               }
+           } catch (Exception ignored) {}
+       }
+       privateChatTabs.clear();
+    }
+
+    public void reloadPlugin() {
+        for (JFrame popoutTab : popoutTabs) {
+            popoutTab.dispose();
+        }
+        popoutTabs.clear();
+        createTabs();
+    }
+
+
+    private void exportChatLog(int tabIndex) {
+        Component tabComponent = tabbedPane.getComponentAt(tabIndex);
+        if (tabComponent instanceof JScrollPane) {
+            JTextPane chatArea = (JTextPane) ((JScrollPane) tabComponent).getViewport().getView();
+            String chatLog = chatArea.getText();
+            JFileChooser fileChooser = new JFileChooser();
+
+            if (config.getLastDIR() != null) {
+                fileChooser.setCurrentDirectory(new File(config.getLastDIR()));
+            }
+
+            String tabName = tabbedPane.getTitleAt(tabIndex);
+            tabName = tabName.replaceAll("[^a-zA-Z0-9]", "_");
+            SimpleDateFormat dateFormat;
+            switch (config.exportLogDate()) {
+                case MM_dd_yy:
+                    dateFormat = new SimpleDateFormat("MM_dd_yy");
+                    break;
+                case dd_MM:
+                    dateFormat = new SimpleDateFormat("dd_MM");
+                    break;
+                case MM_dd:
+                    dateFormat = new SimpleDateFormat("MM_dd");
+                    break;
+                case dd_MM_yy:
+                default:
+                    dateFormat = new SimpleDateFormat("dd_MM_yy");
+                    break;
+            }
+            String currentTime = dateFormat.format(new Date());
+            String defaultFileName = tabName + "_" + currentTime + ".txt";
+            fileChooser.setSelectedFile(new File(defaultFileName));
+            fileChooser.setFileFilter(new FileNameExtensionFilter("Text files (*.txt)", "txt"));
+
+            while (true) {
+                int result = fileChooser.showSaveDialog(this);
+                if (result == JFileChooser.APPROVE_OPTION) {
+                    File selectedFile = fileChooser.getSelectedFile();
+                    if (selectedFile.exists()) {
+                        int overwriteResult = JOptionPane.showConfirmDialog(this,
+                                "File already exists. Do you want to overwrite it?",
+                                "Confirm Overwrite",
+                                JOptionPane.YES_NO_OPTION);
+                        if (overwriteResult == JOptionPane.NO_OPTION) {
+                            continue;
+                        }
+                    }
+                    try (PrintWriter writer = new PrintWriter(selectedFile)) {
+                        writer.println(chatLog);
+                        JOptionPane.showMessageDialog(this, "Chat log exported successfully!", "", JOptionPane.INFORMATION_MESSAGE);
+                        config.setLastDIR(selectedFile.getParent());
+                    } catch (IOException ex) {
+                        JOptionPane.showMessageDialog(this, "Error exporting chat log: " + ex.getMessage(), "Unknown Error", JOptionPane.ERROR_MESSAGE);
+                    }
+                    break;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    private void resetTabHistory(int tabIndex) {
+        int result = JOptionPane.showOptionDialog(
+                tabbedPane,
+                "Are you sure you want to delete this tab's entire chat history?",
+                "Erase tab?",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.ERROR_MESSAGE,
+                null,
+                new Object[] {"Yes", "No"},
+                "No"
+        );
+        if (result != JOptionPane.YES_OPTION) return;
+        Component tabComponent = tabbedPane.getComponentAt(tabIndex);
+        if (tabComponent instanceof JScrollPane) {
+            JTextPane chatArea = (JTextPane) ((JScrollPane) tabComponent).getViewport().getView();
+            chatArea.setText("");
+        }
+    }
+
+    private static final int COOLDOWN = 100;
+
+    private final Timer positionCoolDown = new Timer(COOLDOWN, e -> {
+        savePopoutBounds();
+    });
+    {
+        positionCoolDown.setRepeats(false);
+    }
+    void togglePopout() {
+        if (isPopout) {
+            // Restore to side panel
+            isPopout = false;
+                if (popoutTab != null) {
+                popoutTab.dispose();
+                }
+            popoutFrame.dispose();
+            addComponentsForSidePanel();
+            add(tabbedPane, BorderLayout.CENTER);
+            updateChatStyles();
+            reloadPlugin();
+        } else {
+            isPopout = true;
+            popoutFrame = new JFrame("Chat Panel") {
+                @Override
+                public boolean isUndecorated() {
+                    return overrideUndecorated || super.isUndecorated();
+                }
+            };
+
+            if (!config.hidePopoutIcon()){
+                popoutFrame.setIconImage(ImageUtil.loadImageResource(getClass(), "/ChatPanelimg.png"));
+            } else if (!popoutFrame.isUndecorated()){
+            popoutFrame.setIconImage(new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB));
+            } else {
+                popoutFrame.setIconImage(null);
+            }
+
+            boolean appliedSize = false;
+            if (config.rememberPopoutPosition()) {
+                appliedSize = restorePopoutBounds();
+                if (config.isPopoutMaximized()) {
+                    popoutFrame.setExtendedState(JFrame.MAXIMIZED_BOTH);
+                }
+            }
+
+            if (!appliedSize) {
+                popoutFrame.setSize(config.popoutSize());
+                popoutFrame.setLocationRelativeTo(getParent());
+            }
+
+            addComponentsForPopout();
+            popoutFrame.add(tabbedPane);
+            popoutFrame.setMinimumSize(new Dimension(40, 10));
+            popoutFrame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+            if (config.popoutAlwaysOnTop()) {
+                popoutFrame.setAlwaysOnTop(true);
+            }
+            setCactus(config.popoutOpacity() / 100.0f);
+
+            popoutFrame.addWindowListener(new WindowAdapter() {
+                @Override
+                public void windowClosing(WindowEvent e) {
+                    if (config.hideSidebarIcon() && popoutFrame != null && !config.hidePopoutWarning()) {
+                        //JCheckBox checkBox = new JCheckBox("Do not show this message again. I have read and understand how to retrieve the pop out window"); Can't get working :C
+                        Object[] options = {"OK", "Cancel",};
+                        int choice = JOptionPane.showOptionDialog(
+                                popoutFrame,
+                                "<html><body style='width: 500px;'>The sidebar icon is currently set to hidden (Pop out button hidden too). <br> To relaunch the pop out window, toggle the plugin off/on with Auto-Pop option on. <br> This warning can be turned off in config.</body></html>",
+                                "Closing Pop Out with Sidebar Icon Hidden",
+                                JOptionPane.OK_CANCEL_OPTION,
+                                JOptionPane.INFORMATION_MESSAGE,
+                                null,
+                                options,
+                                options[0]
+                        );
+                        if (choice == JOptionPane.CANCEL_OPTION) {
+                            e.getWindow().setVisible(true);
+                        } else if (choice == JOptionPane.OK_OPTION) {
+                            // if (checkBox.isSelected()) Can't get working yet.
+                           // {
+                           //     config.hidePopoutWarning();
+                           // }
+                            isPopout = false;
+                            popoutFrame.dispose();
+                            addComponentsForSidePanel();
+                            add(tabbedPane, BorderLayout.CENTER);
+                            updateChatStyles();
+                        }
+                    } else {
+                        isPopout = false;
+                        if (popoutFrame != null) {
+                            popoutFrame.dispose();
+                        }
+                        addComponentsForSidePanel();
+                        add(tabbedPane, BorderLayout.CENTER);
+                        updateChatStyles();
+                    }
+                }
+            });
+            //On moved instead of on closed because if RL closes first it doesn't always save position.
+            popoutFrame.addComponentListener(new ComponentAdapter() {
+                @Override
+                public void componentMoved(ComponentEvent e) {
+                    savePopoutBounds();
+                }
+                @Override
+                public void componentResized(ComponentEvent e) {
+                    savePopoutBounds();
+                }
+                private void savePopoutBounds() {
+                    if (config.rememberPopoutPosition()) {
+                        positionCoolDown.restart();
+                    }
+                }
+            });
+            popoutFrame.setVisible(true);
+        }
+    }
+
+    private void popOutTab(int tabIndex) {
+        Component tabComponent = tabbedPane.getComponentAt(tabIndex);
+        String tabTitle = tabbedPane.getTitleAt(tabIndex);
+        if (tabComponent instanceof JScrollPane) {
+            JTextPane chatArea = (JTextPane) ((JScrollPane) tabComponent).getViewport().getView();
+            tabbedPane.remove(tabIndex);
+
+            popoutTab = new JFrame(tabTitle) {
+                @Override
+                public boolean isUndecorated() {
+                    return overrideUndecorated || super.isUndecorated();
+                }
+            };
+
+            if (!config.hidePopoutIcon()){
+                popoutTab.setIconImage(ImageUtil.loadImageResource(getClass(), "/ChatPanelimg.png"));
+            } else  if (!popoutTab.isUndecorated()){
+                popoutTab.setIconImage(new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB));
+            } else {
+                popoutTab.setIconImage(null);
+            }
+
+            popoutTab.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+            popoutTab.setAlwaysOnTop(config.popoutAlwaysOnTop());
+            popoutTab.addWindowListener(new WindowAdapter() {
+                @Override
+                public void windowClosing(WindowEvent e) {
+                    restorePoppedOutTab(tabIndex, chatArea, tabTitle);
+                }
+            });
+            popoutTabs.add(popoutTab);
+            JScrollPane scrollPane = new JScrollPane(chatArea);
+            scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
+            popoutTab.add(scrollPane);
+            setCactus(config.popoutOpacity() / 100.0f);
+            if (isPopout){
+                popoutTab.setLocationRelativeTo(popoutFrame);
+            } else {
+                popoutTab.setLocation(this.getLocationOnScreen());
+            }
+
+            popoutTab.setSize(config.popoutSize());
+            popoutTab.setVisible(true);
+            popoutTab.setMinimumSize(new Dimension(40, 10));
+        }
+    }
+
+    private void restorePoppedOutTab(int tabIndex, JTextPane chatArea, String tabTitle) {
+        JScrollPane scrollPane = new JScrollPane(chatArea);
+        scrollPane.setPreferredSize(new Dimension(Integer.MAX_VALUE, config.chatAreaHeight()));
+        scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
+        tabbedPane.insertTab(tabTitle, null, scrollPane, null, tabbedPane.getTabCount());
+        tabbedPane.setSelectedIndex(tabbedPane.getTabCount() - 1);
+    }
+
+    private boolean restorePopoutBounds() {
+        Rectangle bounds = config.getPopoutBounds();
+        if (bounds != null) {
+            popoutFrame.setBounds(bounds);
+            return true;
+        }
+        return false;
+    }
+
+    private void savePopoutBounds() {
+        if (popoutFrame.getExtendedState() == JFrame.MAXIMIZED_BOTH) {
+            config.setPopoutMaximized(true);
+        } else {
+            config.setPopoutMaximized(false);
+            config.setPopoutBounds(popoutFrame.getBounds());
+        }
+    }
+
+    void setCactus(float opacity) {
+        overrideUndecorated = true;
+        try {
+            if (popoutTab != null) {
+                popoutTab.setOpacity(config.popoutOpacity() / 100.0f);
+            }
+            if (popoutFrame != null) {
+                popoutFrame.setOpacity(config.popoutOpacity() / 100.0f);
+            }
+        } catch (IllegalComponentStateException | UnsupportedOperationException | IllegalArgumentException ignored) {
+            //I don't want to spam the log, this seems to only happen on systems where opacity also can't be applied to RL. Maybe a GPU driver thing?
+        } finally {
+            overrideUndecorated = false;
+        }
+    }
+
+    private void addComponentsForSidePanel() {
+        if (popoutButton != null) {
+            popoutButton.setVisible(true);
+        }
+        if (popinButton != null) {
+            popinButton.setVisible(false);
+            if (!config.hidepopoutButtons()) {
+                add(popoutButton, BorderLayout.SOUTH);
+            }
+            remove(popinButton);
+        }
+        if (popinButton2 != null) {
+            popinButton2.setVisible(false);
+        }
+    }
+
+    private void addComponentsForPopout() {
+        if (!config.hidepopoutButtons()) {
+            popinButton = new JButton("Pop In");
+            popinButton.addActionListener(e -> {
+                if (config.hideSidebarIcon() && popoutFrame != null && !config.hidePopoutWarning()) {
+                    //JCheckBox checkBox = new JCheckBox("Do not show this message again. I have read and understand how to retrieve the pop out window"); Can't get working yet
+                    Object[] options = {"OK", "Cancel"};
+                    int choice = JOptionPane.showOptionDialog(
+                            popoutFrame,
+                            "<html><body style='width: 500px;'>The sidebar icon is currently set to hidden (Pop out button hidden too). <br> To relaunch the pop out window, toggle the plugin off/on with Auto-Pop option on. <br> This warning can be turned off in config.</body></html>",
+                            "Closing Pop Out with Sidebar Icon Hidden",
+                            JOptionPane.OK_CANCEL_OPTION,
+                            JOptionPane.INFORMATION_MESSAGE,
+                            null,
+                            options,
+                            options[0]
+                    );
+                    if (choice == JOptionPane.CANCEL_OPTION) {
+                        setVisible(true);
+                    } else if (choice == JOptionPane.OK_OPTION) {
+                        // if (checkBox.isSelected()) Can't get working yet.
+                        //{
+                       //     config.hidePopoutWarning();
+                        //}
+                        togglePopout();
+                    }
+                } else {
+                    togglePopout();
+                }
+            });
+            popoutFrame.add(popinButton, BorderLayout.SOUTH);
+        }
+        popinButton2 = new JButton("Pop in");
+        popinButton2.addActionListener(e -> togglePopout());
+        add(popinButton2, BorderLayout.SOUTH);
+        if (popoutButton != null){
+            remove(popoutButton);
+        }
+        if (popinButton2 != null) {
+            popinButton2.setVisible(true);
+            add(popinButton2, BorderLayout.SOUTH);
+        }
+    }
+
+    public boolean isPopout() {
+        return isPopout;
+    }
+
+    public void closePopout() {
+        for (JFrame popoutTab : popoutTabs) {
+            popoutTab.dispose();
+        }
+        popoutTabs.clear();
+        if (popoutFrame != null) {
+            popoutFrame.dispose();
+        }
+        isPopout = false;
+    }
+    public void refreshPopout() {
+        SwingUtilities.invokeLater(() -> {
+        if (!config.hidepopoutButtons()) {
+            if (popinButton == null && popoutFrame != null) {
+                popinButton = new JButton("Pop In");
+                popinButton.addActionListener(e -> togglePopout());
+                popoutFrame.add(popinButton, BorderLayout.SOUTH);
+                popinButton.setVisible(true);
+
+            }
+            popoutButton = new JButton("Pop Out");
+            popoutButton.addActionListener(e -> togglePopout());
+            add(popoutButton, BorderLayout.SOUTH);
+            popoutButton.setVisible(true);
+
+        } else {
+            if (popinButton != null) {
+                popoutFrame.remove(popinButton);
+                popinButton = null;
+            }
+            if (popoutButton != null) {
+                remove(popoutButton);
+                popoutButton.setVisible(false);
+            }
+        }
+        if (popoutFrame != null){
+            popoutFrame.revalidate();
+            popoutFrame.repaint();
+        }});
+    }
+
+    //Wrap editor is to mimic wrapping that was in JTextArea, before switching to JTextPane. smh, must be a better way.
+    public static class WrapEditorKit extends StyledEditorKit {
+        @Override
+        public ViewFactory getViewFactory() {
+            return new WrapColumnFactory();
+        }
+
+        static class WrapColumnFactory implements ViewFactory {
+            @Override
+            public View create(Element elem) {
+                String kind = elem.getName();
+                if (kind != null) {
+                    switch (kind) {
+                        case AbstractDocument.ContentElementName:
+                            return new WrapLabelView(elem);
+                        case AbstractDocument.ParagraphElementName:
+                            return new ParagraphView(elem);
+                        case AbstractDocument.SectionElementName:
+                            return new BoxView(elem, View.Y_AXIS);
+                        case StyleConstants.ComponentElementName:
+                            return new ComponentView(elem);
+                        case StyleConstants.IconElementName:
+                            return new IconView(elem);
+                    }
+                }
+                return new LabelView(elem);
+            }
+        }
+
+        static class WrapLabelView extends LabelView {
+            public WrapLabelView(Element elem) {
+                super(elem);
+            }
+
+            @Override
+            public float getMinimumSpan(int axis) {
+                switch (axis) {
+                    case View.X_AXIS:
+                        return 0;
+                    case View.Y_AXIS:
+                        return super.getMinimumSpan(axis);
+                    default:
+                        throw new IllegalArgumentException("Invalid axis: " + axis);
+                }
+            }
+        }
+    }
+
+    private JTextPane createTextPane() {
+        JTextPane textPane = new JTextPane();
+        textPane.setEditable(false);
+        textPane.setBorder(new EmptyBorder(5, 2, 5, 2));
+        SimpleAttributeSet attributes = new SimpleAttributeSet();
+        textPane.getStyledDocument().setParagraphAttributes(0, textPane.getDocument().getLength(), attributes, false);
+        textPane.setEditorKit(new WrapEditorKit());
+        return textPane;
+    }
+
+    private JScrollPane createScrollPane(JTextPane chatArea) {
+        JScrollPane scrollPane = new JScrollPane(chatArea);
+        scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
+        setScrollPaneSize(scrollPane);
+        return scrollPane;
+    }
+
+    private void setScrollPaneSize(JScrollPane scrollPane) {
+       scrollPane.setMaximumSize(new Dimension(Integer.MAX_VALUE, config.chatAreaHeight()));
+       scrollPane.setPreferredSize(new Dimension(Integer.MAX_VALUE, config.chatAreaHeight()));
+    }
+
+    public void updateChatStyles() {
+        setColors();
+        setScrollPaneSizes();
+    }
+
+    public void updateFonts(){
+        setFontSize();
+    }
+
+    private void setFontSize() {
+        publicChatArea.setFont(getFontFromConfig(config.publicChatFontSize()));
+        privateChatArea.setFont(getFontFromConfig(config.privateChatFontSize()));
+        clanChatArea.setFont(getFontFromConfig(config.clanChatFontSize()));
+        friendsChatArea.setFont(getFontFromConfig(config.friendsChatFontSize()));
+        gameChatArea.setFont(getFontFromConfig(config.gameChatFontSize()));
+        allChatArea.setFont(getFontFromConfig(config.allChatFontSize()));
+        customChatArea.setFont(getFontFromConfig(config.customChatFontSize()));
+        customChatArea2.setFont(getFontFromConfig(config.custom2ChatFontSize()));
+        customChatArea3.setFont(getFontFromConfig(config.custom3ChatFontSize()));
+        combatArea.setFont(getFontFromConfig(config.combatFontSize()));
+        if (config.tabFonts() && config.fontFamily() != ChatPanelConfig.FontFamily.NORMAL){
+            tabbedPane.setFont(getFontFromConfig(config.tabFontSize()));
+        } else {
+            tabbedPane.setFont(new Font("RuneScape", Font.PLAIN,config.tabFontSize()));
+        }
+        tabbedPane.revalidate();
+        tabbedPane.repaint();
+
+        for (Map.Entry<String, JTextPane> entry : privateChatTabs.entrySet()) {
+            JTextPane chatArea = entry.getValue();
+            chatArea.setFont(getFontFromConfig(config.privateChatFontSize()));
+        }
+    }
+
+    public static final File CHAT_PANEL_DIR = new File(RuneLite.RUNELITE_DIR.getPath() + File.separator + "chat-panel");
+    private static final File CUSTOM_FONT_FILE = new File(CHAT_PANEL_DIR, "customfont.ttf");
+    boolean fontLoadErrorShown = true;
+    private Font getFontFromConfig(int fontSize) {
+        Font baseFont;
+        switch (config.fontStyle()) {
+            case BOLD:
+                baseFont = new Font("Bold", Font.BOLD, fontSize);
+                break;
+            case ITALIC:
+                baseFont = new Font("Italic", Font.ITALIC, fontSize);
+                break;
+            case ITALIC_BOLD:
+                baseFont = new Font("Italic Bold", Font.ITALIC + Font.BOLD, fontSize);
+                break;
+            default:
+                baseFont = new Font("Plain", Font.PLAIN, fontSize);
+                break;
+        }
+        Font selectedFont;
+
+        switch (config.fontFamily()) {
+            case CUSTOM_FONT:
+                selectedFont = customFontLoader(fontSize, baseFont.getStyle());
+                break;
+            case SUPERFUNKY:
+                selectedFont = fontLoader("/SuperFunky.ttf", fontSize, baseFont.getStyle());
+                break;
+            case FONT2:
+                selectedFont = fontLoader("/MisterPixel.otf", fontSize, baseFont.getStyle());
+                break;
+            case FONT3:
+                selectedFont = fontLoader("/Qaz.ttf", fontSize, baseFont.getStyle());
+                break;
+            case FONT4:
+                selectedFont = fontLoader("/Fonarto.ttf", fontSize, baseFont.getStyle());
+                break;
+            case FONT5:
+                selectedFont = fontLoader("/HomeVideo.ttf", fontSize, baseFont.getStyle());
+                break;
+            case FONT6:
+                selectedFont = fontLoader("/DecemberShow.ttf", fontSize, baseFont.getStyle());
+                break;
+            case FONT7:
+                selectedFont = fontLoader("/Avara.ttf", fontSize, baseFont.getStyle());
+                break;
+            case FONT8:
+                selectedFont = fontLoader("/Funtype.ttf", fontSize, baseFont.getStyle());
+                break;
+            case NORMAL:
+            default:
+                selectedFont = baseFont;
+                break;
+        }
+        return selectedFont;
+    }
+
+    private Font fontLoader(String fontFileName, int fontSize, int fontStyle) {
+        try (InputStream fontStream = getClass().getResourceAsStream(fontFileName)) {
+            GraphicsEnvironment ge = GraphicsEnvironment.getLocalGraphicsEnvironment();
+            Font customFont = Font.createFont(Font.TRUETYPE_FONT, fontStream);
+            ge.registerFont(customFont);
+            return customFont.deriveFont(fontStyle, (float) fontSize);
+        } catch (FontFormatException | IOException ignored) {
+            return new Font("Default", fontStyle, fontSize);
+        }
+    }
+
+    private Font customFontLoader(int fontSize, int fontStyle) {
+        if (!CUSTOM_FONT_FILE.exists()) {
+            if (!fontLoadErrorShown) {
+                String message = "The Custom Font file is empty. \nTo use a Custom Font place a .ttf or .otf file named customfont.ttf into:\n /.runelite/chat-panel/\nFor more info, right click 'Chat Panel', then click 'Support'.";
+                String[] options = {"Open Location", "OK"};
+                fontLoadErrorShown = true;
+                int choice = JOptionPane.showOptionDialog(client.getCanvas(), message, "Empty Font File", JOptionPane.DEFAULT_OPTION, JOptionPane.INFORMATION_MESSAGE, null, options, options[0]);
+                if (choice == 0) {
+                    openDIR();
+                }
+            }
+            return new Font("Default", fontStyle, fontSize);
+        } else {
+            try (InputStream fontStream = new FileInputStream(CUSTOM_FONT_FILE)) {
+                GraphicsEnvironment ge = GraphicsEnvironment.getLocalGraphicsEnvironment();
+                Font customFont = Font.createFont(Font.TRUETYPE_FONT, fontStream);
+                ge.registerFont(customFont);
+                return customFont.deriveFont(fontStyle, (float) fontSize);
+            } catch (FontFormatException | IOException e) {
+                if (!fontLoadErrorShown) {
+                    String message = "Error loading custom font, some fonts don't work.  :( \nHere is the error message that was created:\n" + e.getMessage();
+                    String[] options = {"Open Location", "OK"};
+                    int choice = JOptionPane.showOptionDialog(client.getCanvas(), message, "Font Loading Error", JOptionPane.DEFAULT_OPTION, JOptionPane.ERROR_MESSAGE, null, options, options[0]);
+                    fontLoadErrorShown = true;
+                    if (choice == 0) {
+                        openDIR();
+                    }
+                }
+                return new Font("Default", fontStyle, fontSize);
+            }
+        }
+    }
+
+    private void createDirectory() {
+        if (!CHAT_PANEL_DIR.exists()) {
+            try {
+                boolean dirCreated = CHAT_PANEL_DIR.mkdirs();
+                if (!dirCreated) {
+                    logger.warn("Failed to create directories. Maybe permission issue?");
+                }
+            } catch (Exception e) {
+                logger.error("Error creating directory: {}", e.getMessage());
+            }
+        }
+    }
+
+    private void openDIR() {
+        if (CHAT_PANEL_DIR.exists()) {
+            try {
+                Desktop desktop = Desktop.getDesktop();
+                desktop.open(CUSTOM_FONT_FILE.getParentFile());
+            } catch (IOException e) {
+                JOptionPane.showMessageDialog(client.getCanvas(), "Error opening file browser \nHere is the error message that was created:\n" + e.getMessage(), "Unknown Error", JOptionPane.ERROR_MESSAGE);
+            }
+        } else {
+            JOptionPane.showMessageDialog(client.getCanvas(), "The Chat Panel directory can't be found in /.runelite/\nThis might be caused by a permission issue.\nYou can try creating the /.runelite/chat-panel/ directory manually.", "Directory Not Found", JOptionPane.ERROR_MESSAGE);
+            fontLoadErrorShown = true;
+        }
+    }
+
+    public void highlightTabByTitle(JTabbedPane tabbedPane, String title) {
+        SwingUtilities.invokeLater(() -> {
+            for (int i = 0; i < tabbedPane.getTabCount(); i++) {
+                if (title.equals(tabbedPane.getTitleAt(i))) {
+                    if (tabbedPane.getSelectedIndex() != i) {
+                        tabbedPane.setBackgroundAt(i, config.notificationColor());
+                    } else {
+                        tabbedPane.setBackgroundAt(i, ColorScheme.DARK_GRAY_COLOR);
+                    }
+                    break;
+                }
+            }
+        });
+    }
+
+    public void notifier(String title) {
+        if (title != ""){
+        ChatPanelConfig.NotifiableTab tab;
+        tab = title.startsWith("PMTab") ? ChatPanelConfig.NotifiableTab.PMTabs : ChatPanelConfig.NotifiableTab.valueOf(title);
+        if (config.notifiableTabs().contains(tab)) {
+            if(title.startsWith("PMTab")){
+                highlightTabByTitle(tabbedPane, title.substring(5));
+            }
+            switch (title) {
+                case "Custom1":
+                    highlightTabByTitle(tabbedPane, config.custom1Tabname());
+                    break;
+                case "Custom2":
+                    highlightTabByTitle(tabbedPane, config.custom2Tabname());
+                    break;
+                case "Custom3":
+                    highlightTabByTitle(tabbedPane, config.custom3Tabname());
+                    break;
+                default:
+                    highlightTabByTitle(tabbedPane, title);
+                    break;
+            }
+        }}
+    }
+
+    private Color getColorForCase(String eventName, JTextPane chatArea) {
+        Color color;
+
+        switch (eventName) {
+            case "BROADCAST":
+                color = config.broadcastColor();
+                break;
+            case "CHALREQ_CLANCHAT":
+                color = config.chalReqClanColor();
+                break;
+            case "CHALREQ_FRIENDSCHAT":
+                color = config.chalReqFriendsColor();
+                break;
+            case "CHALREQ_TRADE":
+                color = config.chalReqTradeColor();
+                break;
+            case "CLAN_CHAT":
+                color = config.clanColor();
+                break;
+            case "CLAN_GUEST_CHAT":
+                color = config.clanGuestChatColor();
+                break;
+            case "CLAN_GUEST_MESSAGE":
+                color = config.clanGuestMessageColor();
+                break;
+            case "CLAN_GIM_CHAT":
+                color = config.clanGimChatColor();
+                break;
+            case "CLAN_GIM_MESSAGE":
+                color = config.clanGimMessageColor();
+                break;
+            case "CLAN_MESSAGE":
+                color = config.clanMessageColor();
+                break;
+            case "COMBAT":
+                color = config.combatColor();
+                break;
+            case "COMBAT_BLOCK":
+                color = config.combatBlockColor() != null ? config.combatBlockColor() : config.combatColor();
+                break;
+            case "COMBAT_BURN":
+                color = config.combatBurnColor() != null ? config.combatBurnColor() : config.combatColor();
+                break;
+            case "COMBAT_DRAIN":
+                color = config.combatDrainColor() != null ? config.combatDrainColor() : config.combatColor();
+                break;
+            case "COMBAT_HEAL":
+                color = config.combatHealColor() != null ? config.combatHealColor() : config.combatColor();;
+                break;
+            case "COMBAT_MAX":
+                color = config.combatMaxColor() != null ? config.combatMaxColor() : config.combatColor();
+                break;
+            case "COMBAT_POISON":
+                color = config.combatPoisonColor() != null ? config.combatPoisonColor() : config.combatColor();;
+                break;
+            case "CONSOLE":
+                color = config.consoleColor();
+                break;
+            case "DEATH":
+                color = config.deathColor();
+                break;
+            case "DIALOG":
+                color = config.dialogColor();
+                break;
+            case "DIDYOUKNOW":
+                color = config.didYouKnowColor();
+                break;
+            case "ENGINE":
+                color = config.engineColor();
+                break;
+            case "FRIENDSCHAT":
+                color = config.friendsColor();
+                break;
+            case "FRIENDSCHATNOTIFICATION":
+                color = config.friendsChatNotificationColor();
+                break;
+            case "FRIENDNOTIFICATION":
+                color = config.friendNotificationColor();
+                break;
+            case "GAMEMESSAGE":
+                color = config.gameMessageColor();
+                break;
+            case "IGNORENOTIFICATION":
+                color = config.ignoreNotificationColor();
+                break;
+            case "ITEM_EXAMINE":
+                color = config.itemExamineColor();
+                break;
+            case "LOGINLOGOUTNOTIFICATION":
+                color = config.loginLogoutColor();
+                break;
+            case "MESBOX":
+                color = config.mesboxColor();
+                break;
+            case "MODAUTOTYPER":
+                color = config.modAutoTyperColor();
+                break;
+            case "MODCHAT":
+                color = config.modChatColor();
+                break;
+            case "MODPRIVATECHAT":
+                color = config.modPrivateChatColor();
+                break;
+            case "NPC_EXAMINE":
+                color = config.npcExamineColor();
+                break;
+            case "NPC_SAY":
+                color = config.npcSayColor();
+                break;
+            case "OBJECT_EXAMINE":
+                color = config.objectExamineColor();
+                break;
+            case "PRIVATECHAT":
+                color = config.privateColor();
+                break;
+            case "PRIVATECHATOUT":
+                color = config.privateChatOutColor();
+                break;
+            case "PUBLICCHAT":
+                color = config.publicColor();
+                break;
+            case "SPAM":
+                color = config.spamColor();
+                break;
+            case "TRADE":
+                color = config.tradeColor();
+                break;
+            case "TRADE_SENT":
+                color = config.tradeSentColor();
+                break;
+            case "TRADEREQ":
+                color = config.tradeReqColor();
+                break;
+            case "UNKNOWN":
+                color = config.unknownColor();
+                break;
+            case "WELCOME":
+                color = config.welcomeColor();
+                break;
+            default:
+                color = chatArea.getForeground();
+        }
+
+        if (color == null) {
+            return chatArea.getForeground();
+        }
+        return color;
+    }
+
+    private void setColors() {
+		if (config.chatColorOffset()!= 0) {
+
+			int offset = config.chatColorOffset();}
+		else {
+			int offset = 0;
+		}
+		int offset = 0;
+
+        publicChatArea.setBackground(config.publicChatBackground());
+        publicChatArea.setForeground(adjustColor(config.publicChatColor(), offset));
+        privateChatArea.setBackground(config.privateChatBackground());
+        privateChatArea.setForeground(adjustColor(config.privateChatColor(), offset));
+        clanChatArea.setBackground(config.clanChatBackgroundColor());
+        clanChatArea.setForeground(adjustColor(config.clanChatColor(), offset));
+        friendsChatArea.setBackground(config.friendsChatBackground());
+        friendsChatArea.setForeground(adjustColor(config.friendsChatColor(), offset));
+        gameChatArea.setBackground(config.gameChatBackgroundColor());
+        gameChatArea.setForeground(adjustColor(config.gameChatColor(), offset));
+        allChatArea.setBackground(config.allChatBackground());
+        allChatArea.setForeground(adjustColor(config.allChatColor(), offset));
+        customChatArea.setBackground(config.customChatBackgroundColor());
+        customChatArea.setForeground(adjustColor(config.customChatColor(), offset));
+        customChatArea2.setBackground(config.custom2ChatBackgroundColor());
+        customChatArea2.setForeground(adjustColor(config.custom2ChatColor(), offset));
+        customChatArea3.setBackground(config.custom3ChatBackgroundColor());
+        customChatArea3.setForeground(adjustColor(config.custom3ChatColor(), offset));
+        combatArea.setBackground(config.combatBackgroundColor());
+        combatArea.setForeground(adjustColor(config.combatTextColor(), offset));
+        tabbedPane.setForeground(config.tabTextColor());
+        UIManager.put("TabbedPane.underlineColor", config.underlineColor());
+        UIManager.put("TabbedPane.inactiveUnderlineColor", config.underlineColor());
+        SwingUtilities.invokeLater(() -> {
+            SwingUtilities.updateComponentTreeUI(tabbedPane);
+        });
+        for (Map.Entry<String, JTextPane> entry : privateChatTabs.entrySet()) {
+            JTextPane chatArea = entry.getValue();
+            chatArea.setBackground(config.privateChatBackground());
+            chatArea.setForeground(adjustColor(config.privateChatColor(), offset));
+
+        }
+    }
+
+    private static final String[] Identifiers = {"Public - ", "Clan - ", "Friends Chat - ", "ClanGuest - ", "ClanGIM - ", "ModChat - ", "ModPrivate - "};
+    private Color NameColor(JTextPane chatArea, String cleanedName, String eventName) {
+        if (config.enableMyNameColor()) {
+            String baseName = cleanedName;
+            for (String identifier : Identifiers) {
+                if (cleanedName.startsWith(identifier)) {
+                    baseName = cleanedName.substring(identifier.length()).trim();
+                    break;
+                }
+            }
+            if (client.getLocalPlayer()!=null) {
+                if (Objects.equals(client.getLocalPlayer().getName(), baseName)) {
+                    return config.myNameColor();
+                }
+            }
+        }
+        if (config.OverrideNameColor() && (getColorForCase(eventName, chatArea) != chatArea.getForeground())) {
+            return getColorForCase(eventName, chatArea);
+        }
+
+        if (chatArea == publicChatArea) {
+            return config.publicChatNameColor();
+        } else if (chatArea == privateChatArea) {
+            return config.privateChatNameColor();
+        } else if (chatArea == clanChatArea) {
+            return config.clanChatNameColor();
+        } else if (chatArea == friendsChatArea) {
+            return config.friendsChatNameColor();
+        } else if (chatArea == gameChatArea) {
+            return config.gameChatNameColor();
+        } else if (chatArea == allChatArea) {
+            return config.allChatNameColor();
+        } else if (chatArea == customChatArea) {
+            return config.customChatNameColor();
+        } else if (chatArea == customChatArea2) {
+            return config.custom2ChatNameColor();
+        } else if (chatArea == customChatArea3) {
+            return config.custom3ChatNameColor();
+        } else if (chatArea == combatArea) {
+            return config.combatLabelColor();
+        }
+        for (JTextPane privateChatArea : privateChatTabs.values()) {
+            if (chatArea == privateChatArea) {
+                return config.privateChatNameColor();
+            }
+        }
+        return (Color.YELLOW);
+    }
+
+    private Color TimestampColor(JTextPane chatArea, String eventName) {
+        if (config.OverrideTimestampColor() && (getColorForCase(eventName, chatArea) != chatArea.getForeground())) {
+            return getColorForCase(eventName, chatArea);
+        }
+        if (chatArea == publicChatArea) {
+            return config.publicChatTimestampColor();
+        } else if (chatArea == privateChatArea) {
+            return config.privateChatTimestampColor();
+        } else if (chatArea == clanChatArea) {
+            return config.clanChatTimestampColor();
+        } else if (chatArea == friendsChatArea) {
+            return config.friendsChatTimestampColor();
+        } else if (chatArea == gameChatArea) {
+            return config.gameChatTimestampColor();
+        } else if (chatArea == allChatArea) {
+            return config.allChatTimestampColor();
+        } else if (chatArea == customChatArea) {
+            return config.customChatTimestampColor();
+        } else if (chatArea == customChatArea2) {
+            return config.custom2ChatTimestampColor();
+        } else if (chatArea == customChatArea3) {
+            return config.custom3ChatTimestampColor();
+        } else if (chatArea == combatArea) {
+            return config.combatTimestampColor();
+        }
+        for (JTextPane privateChatArea : privateChatTabs.values()) {
+            if (chatArea == privateChatArea) {
+                return config.privateChatTimestampColor();
+            }
+        }
+        return Color.YELLOW;
+    }
+    private Color GroupColor(JTextPane chatArea, String eventName) {
+        if (config.OverrideGroupNameColor() && (getColorForCase(eventName, chatArea) != chatArea.getForeground())) {
+            return getColorForCase(eventName, chatArea);
+        }
+        if (chatArea == clanChatArea) {
+            return config.clanChatGroupNameColor();
+        } else if (chatArea == friendsChatArea) {
+            return config.friendsChatGroupNameColor();
+        } else if (chatArea == allChatArea) {
+            return config.allChatGroupNameColor();
+        } else if (chatArea == customChatArea) {
+            return config.customChatGroupNameColor();
+        } else if (chatArea == customChatArea2) {
+            return config.custom2ChatGroupNameColor();
+        } else if (chatArea == customChatArea3) {
+            return config.custom3ChatGroupNameColor();
+        }
+        return Color.YELLOW;
+    }
+
+
+    private Color adjustColor(Color color, int offset) {
+        int red = Math.max(0, Math.min(255, color.getRed() + (offset * 255 / 100)));
+        int green = Math.max(0, Math.min(255, color.getGreen() + (offset * 255 / 100)));
+        int blue = Math.max(0, Math.min(255, color.getBlue() + (offset * 255 / 100)));
+        return new Color(red, green, blue);
+    }
+
+    private void highlightWords(String message, String[] highlightWords, Color highlightColor, boolean partialMatching, StyledDocument doc) {
+        List<String> highlightWordsList = new ArrayList<>();
+        for (String word : highlightWords) {
+            if (!word.trim().isEmpty()) {
+                String escapedWord = Pattern.quote(word);
+                highlightWordsList.add(escapedWord);
+            }
+        }
+        Pattern pattern = Pattern.compile((partialMatching? "" : "\\b") + "(" + String.join("|", highlightWordsList) + ")" + (partialMatching? "" : "\\b"), Pattern.CASE_INSENSITIVE);
+        Matcher matcher = pattern.matcher(message);
+        while (matcher.find()) {
+            String matchedWord = matcher.group();
+            int startIndex = doc.getLength() - message.length() + matcher.start();
+            SimpleAttributeSet highlightAttrs = new SimpleAttributeSet();
+            StyleConstants.setForeground(highlightAttrs, highlightColor);
+            doc.setCharacterAttributes(startIndex, matchedWord.length(), highlightAttrs, false);
+        }
+    }
+    private Color runeLiteColors(String eventName)
+    {
+        switch (eventName)
+        {
+            case "PUBLICCHAT":
+            case "MODCHAT":
+                return chatColorConfig.transparentPublicChatHighlight();
+            case "PRIVATECHATOUT":
+                return chatColorConfig.transparentPrivateMessageSentHighlight();
+            case "PRIVATECHAT":
+            case "MODPRIVATECHAT":
+                return chatColorConfig.transparentPrivateMessageReceivedHighlight();
+            case "FRIENDSCHATNOTIFICATION":
+                return chatColorConfig.transparentFriendsChatInfoHighlight();
+            case "FRIENDSCHAT":
+                return chatColorConfig.transparentFriendsChatMessageHighlight();
+            case "CLAN_GIM_MESSAGE":
+            case "CLAN_MESSAGE":
+                return chatColorConfig.transparentClanChatInfoHighlight();
+            case "CLAN_CHAT":
+            case "CLAN_GIM_CHAT":
+                return chatColorConfig.transparentClanChatMessageHighlight();
+            case "CLAN_GUEST_MESSAGE":
+                return chatColorConfig.transparentClanChatGuestInfoHighlight();
+            case "CLAN_GUEST_CHAT":
+                return chatColorConfig.transparentClanChatGuestMessageHighlight();
+            case "TRADEREQ":
+                return chatColorConfig.transparentTradeChatMessageHighlight();
+            case "GAMEMESSAGE":
+            case "ENGINE":
+                return chatColorConfig.transparentServerMessageHighlight();
+            case "CONSOLE":
+                return chatColorConfig.transparentGameMessageHighlight();
+            case "ITEM_EXAMINE":
+            case "OBJECT_EXAMINE":
+            case "NPC_EXAMINE":
+                return chatColorConfig.transparentExamineHighlight();
+            case "SPAM":
+                return chatColorConfig.transparentFilteredHighlight();
+            default:
+            return Color.GREEN;
+        }
+    }
+
+    private void inheritColors(String rawMessage, StyledDocument doc, boolean isOddLine, Color baseColor, String eventName) throws BadLocationException {
+        Color normalColor = isOddLine ? adjustColor(baseColor, config.chatColorOffset()) : baseColor;
+        Color inheritedColor = runeLiteColors(eventName) != null ? runeLiteColors(eventName): normalColor;
+        Color inheritedOdd = isOddLine ? adjustColor(inheritedColor, config.chatColorOffset()) : inheritedColor;
+        Color color = normalColor;
+
+        int last = 0;
+        Pattern pattern = Pattern.compile("(?i)<col(?:=)?([a-z0-9#]+)>|</col>");
+        Matcher matcher = pattern.matcher(rawMessage);
+
+        while (matcher.find()) {
+            if (matcher.start() > last) {
+                SimpleAttributeSet attrs = new SimpleAttributeSet();
+                StyleConstants.setForeground(attrs, color);
+                doc.insertString(doc.getLength(), rawMessage.substring(last, matcher.start()), attrs);
+            }
+            String tag = matcher.group(1);
+            if (tag == null) {
+                color = normalColor;
+            } else {
+                if (config.runeLiteHighlights()) {
+                    if (tag.equals("NORMAL")) {
+                        color = normalColor;
+                    } else if (tag.equals("HIGHLIGHT")) {
+                        color = inheritedOdd;
+                    }
+                }
+                if (config.gameHighlights() && !tag.equals("HIGHLIGHT") && !tag.equals("NORMAL")) {
+                    try {
+                        color = Color.decode("#" + tag);
+                    } catch (NumberFormatException e) {
+                        color = baseColor;
+                    }
+                }
+            }
+            last = matcher.end();
+        }
+        if (last < rawMessage.length()) {
+            SimpleAttributeSet attrs = new SimpleAttributeSet();
+            StyleConstants.setForeground(attrs, color);
+            doc.insertString(doc.getLength(), rawMessage.substring(last), attrs);
+        }
+    }
+
+
+    private void setScrollPaneSizes() {
+        if (tabbedPane.getTabCount() > 0) {
+            setScrollPaneSize((JScrollPane) tabbedPane.getComponentAt(0));
+        }
+        if (tabbedPane.getTabCount() > 1) {
+            setScrollPaneSize((JScrollPane) tabbedPane.getComponentAt(1));
+        }
+        if (tabbedPane.getTabCount() > 2) {
+            setScrollPaneSize((JScrollPane) tabbedPane.getComponentAt(2));
+        }
+        if (tabbedPane.getTabCount() > 3) {
+            setScrollPaneSize((JScrollPane) tabbedPane.getComponentAt(3));
+        }
+        if (tabbedPane.getTabCount() > 4) {
+            setScrollPaneSize((JScrollPane) tabbedPane.getComponentAt(4));
+        }
+        if (tabbedPane.getTabCount() > 5) {
+            setScrollPaneSize((JScrollPane) tabbedPane.getComponentAt(5));
+        }
+        if (tabbedPane.getTabCount() > 6) {
+            setScrollPaneSize((JScrollPane) tabbedPane.getComponentAt(6));
+        }
+        if (tabbedPane.getTabCount() > 7) {
+            setScrollPaneSize((JScrollPane) tabbedPane.getComponentAt(7));
+        }
+        if (tabbedPane.getTabCount() > 8) {
+            setScrollPaneSize((JScrollPane) tabbedPane.getComponentAt(8));
+        }
+        if (tabbedPane.getTabCount() > 9) {
+            setScrollPaneSize((JScrollPane) tabbedPane.getComponentAt(9));
+        }
+    }
+
+    public String groupNameFinder(String eventName) {
+        String groupName = null;
+        if (((eventName.contains("CLAN") || eventName.equals("CHALREQ_CLANCHAT")) && !eventName.contains("GUEST")) && client.getClanChannel() != null && config.showClanName()) {
+            groupName = client.getClanChannel().getName();
+        } else if ((eventName.equals("CLAN_GUEST_MESSAGE") || eventName.equals("CLAN_GUEST_CHAT")) && client.getGuestClanChannel() != null && config.showClanName()) {
+            groupName = client.getGuestClanChannel().getName();
+        } else if (eventName.contains("FRIENDS") && client.getFriendsChatManager() != null && config.showFCName()) {
+            groupName = client.getFriendsChatManager().getName();
+        }
+        return groupName;
+    }
+
+
+    public void addPublicChatMessage(String timestamp, String cleanedName, String message, String eventName) {
+        String notifier ="Public";
+        addMessageToChatArea(publicChatArea, timestamp, cleanedName, message, eventName, notifier);
+    }
+
+    public void addPrivateChatMessage(String timestamp, String name, String message, String eventName) {
+        if (config.splitPMs()){
+            JTextPane chatArea;
+            if (eventName.equals("LOGINLOGOUTNOTIFICATION")) {
+                String nameTag = message.replace(" has logged out.", "").replace(" has logged in.", "");
+                JTextPane pmTab = privateChatTabs.get(nameTag);
+                if (pmTab != null) {
+                    chatArea = createPrivateChatTabs(nameTag);
+                    String notifier ="PMTab" + (nameTag);
+
+                    addMessageToChatArea(chatArea, timestamp, name, message, eventName, notifier);
+                }
+            } else {
+                chatArea = createPrivateChatTabs(name);
+                String notifier = "PMTab" + (name.substring(name.indexOf(' ') + 1));
+                addMessageToChatArea(chatArea, timestamp, name, message, eventName, notifier);
+            }
+        }
+        if (config.showPrivateChat() && !maxPMmessageshown || mergedPMs) {
+            String notifier = "Private";
+            addMessageToChatArea(privateChatArea, timestamp, name, message, eventName, notifier);
+        }
+    }
+
+    public void addClanChatMessage(String timestamp, String name, String cleanedMessage, String eventName) {
+        String notifier = "Clan";
+        addMessageToChatArea(clanChatArea, timestamp, name, cleanedMessage, eventName, notifier);
+    }
+
+    public void addFriendsChatMessage(String timestamp, String name, String cleanedMessage, String eventName) {
+        String notifier = "Friends";
+        addMessageToChatArea(friendsChatArea, timestamp, name, cleanedMessage, eventName, notifier);
+    }
+
+    public void addAllChatMessage(String timestamp, String cleanedName, String cleanedMessage, String eventName) {
+        String notifier = "All";
+        addMessageToChatArea(allChatArea, timestamp, cleanedName, cleanedMessage, eventName, notifier);
+    }
+
+    public void addCustomChatMessage(String timestamp, String cleanedName, String cleanedMessage, String eventName) {
+        String notifier = "Custom1";
+        addMessageToChatArea(customChatArea, timestamp, cleanedName, cleanedMessage, eventName, notifier);
+    }
+
+    public void addCustom2ChatMessage(String timestamp, String cleanedName, String cleanedMessage, String eventName) {
+        String notifier = "Custom2";
+        addMessageToChatArea(customChatArea2, timestamp, cleanedName, cleanedMessage, eventName, notifier);
+    }
+
+    public void addCustom3ChatMessage(String timestamp, String cleanedName, String cleanedMessage, String eventName) {
+        String notifier = "Custom3";
+        addMessageToChatArea(customChatArea3, timestamp, cleanedName, cleanedMessage, eventName, notifier);
+    }
+
+    public void addGameChatMessage(String timestamp, String cleanedName, String cleanedMessage, String eventName) {
+        String notifier = "Game";
+        addMessageToChatArea(gameChatArea, timestamp, cleanedName, cleanedMessage, eventName, notifier);
+    }
+
+    public void addCombatMessage(String timestamp, String cleanedName, String combatMessage, String eventName) {
+        String notifier = "Combat";
+        addMessageToChatArea(combatArea, timestamp, cleanedName, combatMessage, eventName, notifier);
+    }
+
+    private String filterAllChatMessage(String message) {
+        return message.replaceAll("<col=[0-9a-fA-F]+>|</col>", "").replace("<br>", " ").replace("<colHIGHLIGHT>", "").replace("<colNORMAL>", "");
+    }
+
+    private void addMessageToChatArea(JTextPane chatArea, String timestamp, String cleanedName, String message, String eventName, String notifier) {
+        SwingUtilities.invokeLater(() -> {
+            String groupName = groupNameFinder(eventName);
+            StyledDocument doc = chatArea.getStyledDocument();
+            JScrollPane scrollPane = (JScrollPane) chatArea.getParent().getParent();
+            JScrollBar verticalScrollBar = scrollPane.getVerticalScrollBar();
+
+            boolean shouldAutoScroll = (verticalScrollBar.getValue() + verticalScrollBar.getVisibleAmount() == verticalScrollBar.getMaximum());
+
+            int extraLines = config.lineSpacing();
+            int offset = extraLines;
+
+
+            final String[] tempMessage = new String[] { message };
+            if (config.replaceInsteadOfRemove()) {
+                for (String filter : config.filteredMessages().trim().split("\\s*,\\s*")) {
+                    if (filter.trim().isEmpty()) continue;
+                    if (message.toLowerCase().contains(filter.toLowerCase())) {
+                        return;
+                    }
+                }
+            } else {
+                for (String filter : config.filteredMessages().trim().split("\\s*,\\s*")) {
+                    if (filter.trim().isEmpty()) continue;
+                    String regex = "(?i)" + Pattern.quote(filter);
+                    tempMessage[0] = tempMessage[0].replaceAll(regex, "*".repeat(filter.length()));
+                }
+            }
+
+            notifier(notifier);
+            String filteredMessage = tempMessage[0];
+
+            Color baseColor = getColorForCase(eventName, chatArea);
+            int lineCount = doc.getDefaultRootElement().getElementCount();
+            int effectiveLineCount = (lineCount + extraLines - 1) / (extraLines + 1);
+            boolean isOddLine = (effectiveLineCount - 1) % 2!= 0;
+
+
+            SimpleAttributeSet timestampAttrs = new SimpleAttributeSet();
+            Color timestampColor;
+            timestampColor = isOddLine ? adjustColor(TimestampColor(chatArea, eventName), config.chatColorOffset()) : TimestampColor(chatArea, eventName);
+            StyleConstants.setForeground(timestampAttrs, timestampColor);
+
+            SimpleAttributeSet groupAttrs = new SimpleAttributeSet();
+            Color groupColor = isOddLine ? adjustColor(GroupColor(chatArea, eventName), config.chatColorOffset()) : GroupColor(chatArea, eventName);
+            StyleConstants.setForeground(groupAttrs, groupColor);
+
+            SimpleAttributeSet nameAttrs = new SimpleAttributeSet();
+            Color nameColor = isOddLine ? adjustColor(NameColor(chatArea, cleanedName, eventName), config.chatColorOffset()) : NameColor(chatArea, cleanedName, eventName);
+            StyleConstants.setForeground(nameAttrs, nameColor);
+
+            java.util.function.Supplier<Color> getRandomBrightColor = () -> {
+                int r, g, b;
+                do {
+                    r = (int)(Math.random() * 256);
+                    g = (int)(Math.random() * 256);
+                    b = (int)(Math.random() * 256);
+                    double brightness = 0.299 * r + 0.587 * g + 0.114 * b; // Apparently, ITU-R BT.601 is the values used by video games to determine what colors are perceived to be bright? Very cool, what a world.
+                    if (brightness >= config.randomColorsMinBrightness()) break;
+                } while (true);
+                return new Color(r, g, b);
+            };
+
+            try {
+				if (!timestamp.isEmpty()) {
+					doc.insertString(doc.getLength(), "[" + timestamp + "] ", timestampAttrs);
+				}
+                if ((config.showClanName() || config.showFCName()) && groupName != null) {
+                    doc.insertString(doc.getLength(), "[" + groupName + "] ", groupAttrs);
+                }
+				if (!cleanedName.isEmpty()) {
+                    doc.insertString(doc.getLength(), "[" + cleanedName + "]: ", nameAttrs);
+                }
+
+                if (config.randomColors()) {
+                    for (char c : filteredMessage.toCharArray()) {
+                        SimpleAttributeSet charAttrs = new SimpleAttributeSet();
+                        Color randomColor = getRandomBrightColor.get();
+                        StyleConstants.setForeground(charAttrs, randomColor);
+                        doc.insertString(doc.getLength(), String.valueOf(c), charAttrs);
+                    }
+                } else if (config.gameHighlights() || config.runeLiteHighlights()){
+                    inheritColors(filteredMessage, doc, isOddLine, baseColor, eventName);
+                    filteredMessage = filterAllChatMessage(message);
+                } else {
+                    filteredMessage = filterAllChatMessage(message);
+
+                    SimpleAttributeSet messageAttrs = new SimpleAttributeSet();
+                    Color messageColor = isOddLine ? adjustColor(baseColor, config.chatColorOffset()) : baseColor;
+                    StyleConstants.setForeground(messageAttrs, messageColor);
+                    doc.insertString(doc.getLength(), filteredMessage, messageAttrs);
+                }
+
+                if (config.damageNumberColor() != 0 && eventName.contains("COMBAT")) {
+                    Matcher matcher = Pattern.compile("(:\\s*)(\\d+)$").matcher(filteredMessage);
+                    if (matcher.find()) {
+                        int matchStart = doc.getLength() - filteredMessage.length() + matcher.start(2);
+                        int matchEnd = doc.getLength() - filteredMessage.length() + matcher.end(2);
+
+                        SimpleAttributeSet numberAttrs = new SimpleAttributeSet();
+                        Color messageColor = isOddLine ? adjustColor(baseColor, config.chatColorOffset()) : baseColor;
+                        StyleConstants.setForeground(numberAttrs, adjustColor(messageColor, config.damageNumberColor()));
+                        doc.setCharacterAttributes(matchStart, matchEnd - matchStart, numberAttrs, false);
+                    }
+                }
+
+                if (!config.highlightWords3().trim().isEmpty()) {
+                    String[] highlightWords3Array = config.highlightWords3().split("\\s*,\\s*");
+                    highlightWords(filteredMessage, highlightWords3Array, config.highlightColor3(), config.PartialMatching(), doc);
+                }
+                if (!config.highlightWords2().trim().isEmpty()) {
+                    String[] highlightWords2Array = config.highlightWords2().split("\\s*,\\s*");
+                    highlightWords(filteredMessage, highlightWords2Array, config.highlightColor2(), config.PartialMatching(), doc);
+                }
+                if (!config.highlightWords().trim().isEmpty()) {
+                    String[] highlightWordsArray = config.highlightWords().split("\\s*,\\s*");
+                    highlightWords(filteredMessage, highlightWordsArray, config.highlightColor(), config.PartialMatching(), doc);
+                }
+
+                doc.insertString(doc.getLength(), "\n", null);
+
+                for (int i = 0; i < extraLines; i++) {
+                    doc.insertString(doc.getLength(), "\n", null);
+                }
+
+                int excess = doc.getDefaultRootElement().getElementCount() - config.maxLines();
+                if (excess > 1) {
+                    try {
+                        Element root = doc.getDefaultRootElement();
+                        int linesToRemove = (excess + extraLines);
+                        int endOffset = 0;
+                        for (int i = 0; i < linesToRemove; i++) {
+                            Element line = root.getElement(i);
+                            endOffset = line.getEndOffset();
+                        }
+                        doc.remove(0, endOffset);
+                    } catch (BadLocationException e) {
+                        logger.error("Error removing excess lines from chat", e);
+                    }
+                }
+            } catch (BadLocationException e) {
+                logger.error("Error managing chat lines", e);
+            }
+
+            if (shouldAutoScroll) {
+                chatArea.setCaretPosition(doc.getLength());
+            }
+        });
+    }
+}

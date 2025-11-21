@@ -1,0 +1,27 @@
+package net.runelite.client.plugins.pluginhub.abex.os.keepassxc;
+
+import net.runelite.client.plugins.pluginhub.abex.os.keepassxc.proto.msg.GetLogins;
+import net.runelite.client.plugins.pluginhub.abex.os.keepassxc.proto.KeePassXCSocket;
+import com.google.gson.Gson;
+
+public class ManualTest
+{
+	public static void main(String... args) throws Exception
+	{
+		try (KeePassXCSocket s = new KeePassXCSocket(new Gson()))
+		{
+			s.setDeadline(500);
+			long start = System.currentTimeMillis();
+			s.init();
+			System.out.println((System.currentTimeMillis() - start) + " ms");
+			s.clearDeadline();
+			GetLogins.Response r = s.call(GetLogins.ACTION, GetLogins.Request.builder()
+				.action(GetLogins.ACTION)
+				.url("https://secure.runescape.com/")
+				.keys(s.getKeys())
+				.build(), GetLogins.Response.class);
+			System.out.println(r.toString());
+		}
+	}
+}
+

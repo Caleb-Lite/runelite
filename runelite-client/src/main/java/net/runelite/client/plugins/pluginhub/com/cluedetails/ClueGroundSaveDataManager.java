@@ -1,0 +1,103 @@
+package net.runelite.client.plugins.pluginhub.com.cluedetails;
+
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
+import java.lang.reflect.Type;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import net.runelite.api.Client;
+import net.runelite.api.coords.WorldPoint;
+import net.runelite.client.config.ConfigManager;
+
+@Singleton
+public class ClueGroundSaveDataManager
+{
+	private final Client client;
+	private final ConfigManager configManager;
+	private final Gson gson;
+	private static final String CONFIG_GROUP = "clue-details";
+	private static final String GROUND_CLUES_KEY = "ground-clues";
+	private final List<ClueInstanceData> clueInstanceData = new ArrayList<>();
+
+	@Inject
+	public ClueGroundSaveDataManager(Client client, ConfigManager configManager, Gson gson)
+	{
+		this.client = client;
+		this.configManager = configManager;
+		this.gson = gson;
+	}
+
+	public void saveStateToConfig(List<ClueInstance> groundClues)
+	{
+		// Serialize groundClues save to config
+		updateData(groundClues);
+		// Offset despawn time by current client tick count
+		for (ClueInstanceData data : clueInstanceData)
+		{
+			data.setDespawnTick(data.getDespawnTick() - client.getTickCount());
+		}
+		String groundCluesJson = gson.toJson(clueInstanceData);
+		configManager.setConfiguration(CONFIG_GROUP, GROUND_CLUES_KEY, groundCluesJson);
+	}
+
+	private void updateData(List<ClueInstance> groundClues)
+	{
+		List<ClueInstanceData> newData = new ArrayList<>();
+		for (ClueInstance groundClue : groundClues)
+		{
+			newData.add(new ClueInstanceData(groundClue));
+		}
+		clueInstanceData.clear();
+		clueInstanceData.addAll(newData);
+	}
+
+	public Map<WorldPoint, List<ClueInstance>> loadStateFromConfig()
+	{
+		String groundCluesJson = configManager.getConfiguration(CONFIG_GROUP, GROUND_CLUES_KEY);
+		clueInstanceData.clear();
+
+		Map<WorldPoint, List<ClueInstance>> groundClues = new HashMap<>();
+		if (groundCluesJson != null)
+		{
+			try
+			{
+				Type groundCluesType = new TypeToken<List<ClueInstanceData>>()
+				{
+				}.getType();
+
+				List<ClueInstanceData> loadedGroundCluesData = gson.fromJson(groundCluesJson, groundCluesType);
+
+				// Convert ClueInstanceData back to ClueInstance
+				for (ClueInstanceData clueData : loadedGroundCluesData)
+				{
+					clueInstanceData.add(clueData);
+
+					WorldPoint location = clueData.getLocation();
+					ClueInstance clue = new ClueInstance(clueData);
+					// Offset despawn time by current client tick count
+					clue.setTimeToDespawnFromDataInTicks(clue.getTimeToDespawnFromDataInTicks() + client.getTickCount());
+					if (groundClues.containsKey(location))
+					{
+						groundClues.get(location).add(clue);
+						continue;
+					}
+
+					List<ClueInstance> clueInstances = new ArrayList<>();
+					clueInstances.add(clue);
+
+					groundClues.put(location, clueInstances);
+				}
+			} catch (Exception err)
+			{
+				groundClues.clear();
+				saveStateToConfig(new ArrayList<>());
+			}
+		}
+
+		return groundClues;
+	}
+}

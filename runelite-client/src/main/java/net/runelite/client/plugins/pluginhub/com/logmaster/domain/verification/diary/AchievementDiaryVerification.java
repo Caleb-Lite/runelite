@@ -1,0 +1,15 @@
+package net.runelite.client.plugins.pluginhub.com.logmaster.domain.verification.diary;
+
+import net.runelite.client.plugins.pluginhub.com.logmaster.domain.verification.Verification;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.NonNull;
+
+@Getter
+@AllArgsConstructor
+@NoArgsConstructor
+public class AchievementDiaryVerification extends Verification {
+    private @NonNull DiaryRegion region;
+    private @NonNull DiaryDifficulty difficulty;
+}

@@ -1,0 +1,36 @@
+package net.runelite.client.plugins.pluginhub.io.mark.hdminimap;
+
+import net.runelite.client.plugins.pluginhub.io.mark.hdminimap.render.MinimapStyle;
+import net.runelite.client.config.Config;
+import net.runelite.client.config.ConfigGroup;
+import net.runelite.client.config.ConfigItem;
+
+/**
+ * Configuration interface for the HD Minimap plugin
+ */
+@ConfigGroup(HDMinimapConfig.CONFIG_GROUP)
+public interface HDMinimapConfig extends Config {
+
+    String CONFIG_GROUP = "hdminimap";
+
+    @ConfigItem(
+            keyName = "minimapStyle",
+            name = "Minimap Style",
+            description = "Choose the rendering style for the minimap",
+            position = 1
+    )
+    default MinimapStyle minimapStyle() {
+        return MinimapStyle.HD;
+    }
+
+
+    @ConfigItem(
+            keyName = "minimapSideBar",
+            name = "Map Elements Sidebar",
+            description = "Toggle visibility of minimap elements via the sidebar",
+            position = 2
+    )
+    default boolean displaySidebar() {
+        return true;
+    }
+}

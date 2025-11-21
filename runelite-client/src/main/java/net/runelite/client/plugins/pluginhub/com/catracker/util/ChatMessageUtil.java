@@ -1,0 +1,77 @@
+package net.runelite.client.plugins.pluginhub.com.catracker.util;
+
+import net.runelite.client.plugins.pluginhub.com.catracker.config.CombatAchievementsConfig;
+import net.runelite.client.plugins.pluginhub.com.catracker.model.CombatAchievement;
+import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.Client;
+import net.runelite.api.ChatMessageType;
+import net.runelite.client.chat.ChatMessageBuilder;
+import net.runelite.client.chat.ChatMessageManager;
+import net.runelite.client.chat.QueuedMessage;
+
+import java.awt.Color;
+import java.util.List;
+
+/**
+ * Utility class for sending chat messages related to combat achievements
+ */
+@Slf4j
+public class ChatMessageUtil
+{
+	private final ChatMessageManager chatMessageManager;
+	private final Client client;
+
+	public ChatMessageUtil(ChatMessageManager chatMessageManager, Client client)
+	{
+		this.chatMessageManager = chatMessageManager;
+		this.client = client;
+	}
+
+	/**
+	 * Send a progress message when a combat achievement is completed
+	 */
+	public void sendProgressMessage(List<CombatAchievement> allAchievements,
+									CombatAchievementsConfig.TierGoal tierGoal)
+	{
+		int totalCompletedPoints = allAchievements.stream()
+			.filter(CombatAchievement::isCompleted)
+			.mapToInt(CombatAchievement::getPoints)
+			.sum();
+
+		int pointGoal = TierUtil.getPointsFromGoal(tierGoal, totalCompletedPoints);
+		String actualTierName = TierUtil.getActualTierName(tierGoal, totalCompletedPoints);
+
+		ChatMessageBuilder message = new ChatMessageBuilder()
+			.append(Color.CYAN, "[Combat Achievements] ");
+
+		if (totalCompletedPoints >= pointGoal)
+		{
+			message.append(Color.GREEN, actualTierName + " tier completed! ")
+				.append(Color.WHITE, "(" + totalCompletedPoints + " points)");
+		}
+		else
+		{
+			int remainingPoints = pointGoal - totalCompletedPoints;
+			message.append(Color.WHITE, "Progress: " + totalCompletedPoints + "/" + pointGoal + " points ")
+				.append(Color.YELLOW, "(" + remainingPoints + " points to " + actualTierName + ")");
+		}
+
+		sendChatMessage(message.build());
+	}
+
+	/**
+	 * Send a custom chat message
+	 */
+	public void sendChatMessage(String message)
+	{
+		if (client == null)
+		{
+			return;
+		}
+
+		chatMessageManager.queue(QueuedMessage.builder()
+			.type(ChatMessageType.CONSOLE)
+			.runeLiteFormattedMessage(message)
+			.build());
+	}
+}

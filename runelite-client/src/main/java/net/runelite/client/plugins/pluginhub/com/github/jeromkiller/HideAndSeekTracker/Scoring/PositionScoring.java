@@ -1,0 +1,24 @@
+package net.runelite.client.plugins.pluginhub.com.github.jeromkiller.HideAndSeekTracker.Scoring;
+
+import net.runelite.client.plugins.pluginhub.com.github.jeromkiller.HideAndSeekTracker.game.HideAndSeekPlayer;
+import net.runelite.client.plugins.pluginhub.com.github.jeromkiller.HideAndSeekTracker.game.HideAndSeekRound;
+
+public class PositionScoring extends NumberScoring {
+    public PositionScoring() {
+        super(ScoreType.POSITION, false);
+    }
+
+    @Override
+    public int scorePlayer(HideAndSeekPlayer player, HideAndSeekRound round) {
+        final int position = player.getPlacementValue();
+        if(position == 0) {
+            return 0;
+        }
+        for(final ScoringPair<Integer> pair: scoreTiers) {
+            if(position <= pair.getSetting()) {
+                return pair.getPoints();
+            }
+        }
+        return fallThroughScore;
+    }
+}

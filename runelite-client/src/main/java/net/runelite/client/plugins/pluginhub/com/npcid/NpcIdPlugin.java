@@ -1,0 +1,180 @@
+package net.runelite.client.plugins.pluginhub.com.npcid;
+
+import com.google.common.collect.ImmutableSet;
+import com.google.inject.Inject;
+import com.google.inject.Provides;
+import java.awt.Color;
+import java.util.Set;
+import net.runelite.api.Client;
+import net.runelite.api.MenuAction;
+import net.runelite.api.MenuEntry;
+import net.runelite.api.NPC;
+import net.runelite.api.NpcID;
+import net.runelite.api.events.MenuEntryAdded;
+import net.runelite.api.events.MenuOpened;
+import net.runelite.client.config.ConfigManager;
+import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.events.ConfigChanged;
+import net.runelite.client.plugins.Plugin;
+import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.ui.overlay.OverlayManager;
+import net.runelite.client.util.ColorUtil;
+
+@PluginDescriptor(
+	name = "NPC ID",
+	description = "Display identification information as text above NPCs.",
+	tags = {"NPC", "ID", "index", "name"}
+)
+public class NpcIdPlugin extends Plugin
+{
+	private static final Set<Integer> NPC_MENU_ACTIONS = ImmutableSet.of(
+		MenuAction.NPC_FIRST_OPTION.getId(),
+		MenuAction.NPC_SECOND_OPTION.getId(),
+		MenuAction.NPC_THIRD_OPTION.getId(),
+		MenuAction.NPC_FOURTH_OPTION.getId(),
+		MenuAction.NPC_FIFTH_OPTION.getId(),
+		MenuAction.EXAMINE_NPC.getId()
+	);
+	static final Set<Integer> RANDOM_EVENT_NPC_IDS = ImmutableSet.of(
+		NpcID.BEE_KEEPER_6747,
+		NpcID.CAPT_ARNAV,
+		NpcID.DR_JEKYLL, NpcID.DR_JEKYLL_314,
+		NpcID.DRUNKEN_DWARF,
+		NpcID.DUNCE_6749,
+		NpcID.EVIL_BOB, NpcID.EVIL_BOB_6754,
+		NpcID.FLIPPA_6744,
+		NpcID.FREAKY_FORESTER_6748,
+		NpcID.FROG_5429, NpcID.FROG_5430, NpcID.FROG_5431, NpcID.FROG_5432, NpcID.FROG, NpcID.FROG_PRINCE, NpcID.FROG_PRINCESS,
+		NpcID.GENIE, NpcID.GENIE_327,
+		NpcID.GILES, NpcID.GILES_5441,
+		NpcID.LEO_6746,
+		NpcID.MILES, NpcID.MILES_5440,
+		NpcID.MYSTERIOUS_OLD_MAN_6750, NpcID.MYSTERIOUS_OLD_MAN_6751,
+		NpcID.MYSTERIOUS_OLD_MAN_6752, NpcID.MYSTERIOUS_OLD_MAN_6753,
+		NpcID.NILES, NpcID.NILES_5439,
+		NpcID.PILLORY_GUARD,
+		NpcID.POSTIE_PETE_6738,
+		NpcID.QUIZ_MASTER_6755,
+		NpcID.RICK_TURPENTINE, NpcID.RICK_TURPENTINE_376,
+		NpcID.SANDWICH_LADY,
+		NpcID.SERGEANT_DAMIEN_6743,
+		NpcID.COUNT_CHECK_12551, NpcID.COUNT_CHECK_12552
+	);
+	int hoverNpcIndex = -1;
+	boolean showId;
+	boolean showIndex;
+	boolean showName;
+	boolean showAboveNpc;
+	boolean hoverOnly;
+	boolean showIdInMenu;
+	boolean showIndexInMenu;
+	boolean stripTags;
+	Color textColour = null;
+	boolean hidePets;
+	boolean hideRandomEvents;
+	boolean showTransmitOrder;
+	boolean showTransmitOrderInMenu;
+
+	@Inject
+	private Client client;
+
+	@Inject
+	private NpcIdConfig config;
+
+	@Inject
+	private NpcIdOverlay npcOverlay;
+
+	@Inject
+	private OverlayManager overlayManager;
+
+	@Provides
+	NpcIdConfig providesConfig(ConfigManager configManager)
+	{
+		return configManager.getConfig(NpcIdConfig.class);
+	}
+
+	@Override
+	protected void startUp() throws Exception
+	{
+		cacheConfig();
+		overlayManager.add(npcOverlay);
+	}
+
+	@Override
+	protected void shutDown() throws Exception
+	{
+		overlayManager.remove(npcOverlay);
+	}
+
+	private void cacheConfig()
+	{
+		showId = config.showId();
+		showIndex = config.showIndex();
+		showName = config.showName();
+		showIdInMenu = config.showIdInMenu();
+		showIndexInMenu = config.showIndexInMenu();
+		hoverOnly = config.hoverOnly();
+		stripTags = config.stripTags();
+		textColour = config.textColour();
+		hidePets = config.hidePets();
+		hideRandomEvents = config.hideRandomEvents();
+		showTransmitOrder = config.showTransmitOrder();
+		showTransmitOrderInMenu = config.showTransmitOrderInMenu();
+	}
+
+	@Subscribe
+	public void onConfigChanged(ConfigChanged event)
+	{
+		if (NpcIdConfig.GROUP.equals(event.getGroup()))
+		{
+			cacheConfig();
+		}
+	}
+
+	@Subscribe
+	public void onMenuOpened(MenuOpened event)
+	{
+		if (!showIdInMenu && !showIndexInMenu && !showTransmitOrderInMenu)
+		{
+			return;
+		}
+
+		MenuEntry[] entries = event.getMenuEntries();
+		for (int i = 0; i < entries.length; i++)
+		{
+			NPC npc = entries[i].getNpc();
+			if (npc != null)
+			{
+				String text = showIdInMenu ? (" " + npc.getId()) : "";
+				text += showIndexInMenu ? ((!showIdInMenu ? " " : "") + "#" + npc.getIndex()) : "";
+				if (showTransmitOrderInMenu)
+				{
+					int transmitOrder = 0;
+					for (NPC transmittedNpc : client.getNpcs())
+					{
+						if (npc.equals(transmittedNpc))
+						{
+							text += " [" + transmitOrder + "]";
+							break;
+						}
+						transmitOrder++;
+					}
+				}
+				entries[i].setTarget(entries[i].getTarget() + ColorUtil.wrapWithColorTag(text, textColour));
+			}
+		}
+	}
+
+	@Subscribe
+	public void onMenuEntryAdded(MenuEntryAdded event)
+	{
+		if (NPC_MENU_ACTIONS.contains(event.getType()))
+		{
+			hoverNpcIndex = event.getIdentifier();
+		}
+		else
+		{
+			hoverNpcIndex = -1;
+		}
+	}
+}

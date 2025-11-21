@@ -1,0 +1,90 @@
+package net.runelite.client.plugins.pluginhub.com.encryptiron;
+
+import javax.inject.Inject;
+
+import net.runelite.client.plugins.pluginhub.com.encryptiron.rest.MessageHeaderData;
+import net.runelite.client.plugins.pluginhub.com.encryptiron.rest.NewCollectionLogEntry;
+import net.runelite.client.plugins.pluginhub.com.encryptiron.rest.OnBossKilled;
+import net.runelite.client.plugins.pluginhub.com.encryptiron.rest.SendCollectionLog;
+import net.runelite.client.plugins.pluginhub.com.encryptiron.rest.SendCombatAchievements;
+import net.runelite.client.plugins.pluginhub.com.encryptiron.rest.SendItemDrop;
+import com.google.inject.Provides;
+
+import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.Client;
+import net.runelite.api.events.PlayerChanged;
+import net.runelite.client.config.ConfigManager;
+import net.runelite.client.eventbus.EventBus;
+import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.plugins.Plugin;
+import net.runelite.client.plugins.PluginDescriptor;
+
+@Slf4j
+@PluginDescriptor(
+    name = "Valiance",
+    description="Valiance clan plugin to help automate events."
+)
+public class ValianceClanPlugin extends Plugin
+{
+    @Inject
+    private Client client;
+    
+    @Inject
+    public ValianceConfig config;
+
+    @Inject
+    public SendCollectionLog sendCollectionLog;
+
+    @Inject
+    public SendCombatAchievements sendCombatAchievements;
+    
+    @Inject
+    public SendItemDrop sendItemDrop;
+
+    @Inject
+    public NewCollectionLogEntry newClogEntry;
+
+    @Inject
+    public OnBossKilled onBossKilled;
+
+    @Inject
+    private EventBus eventBus;
+
+    @Override
+    protected void startUp() throws Exception
+    {
+        eventBus.register(sendCollectionLog);
+        eventBus.register(sendCombatAchievements);
+        eventBus.register(sendItemDrop);
+        eventBus.register(newClogEntry);
+        eventBus.register(onBossKilled);
+
+        if (client.getLocalPlayer() != null && client.getLocalPlayer().getName() != null)
+        {
+            MessageHeaderData.setPlayerName(client.getLocalPlayer().getName());
+        }
+    }
+
+    @Override
+    protected void shutDown() throws Exception
+    {
+        eventBus.unregister(sendCollectionLog);
+        eventBus.unregister(sendCombatAchievements);
+        eventBus.unregister(sendItemDrop);
+        eventBus.unregister(newClogEntry);
+        eventBus.unregister(onBossKilled);
+    }
+
+    @Provides
+    ValianceConfig getConfig(ConfigManager configManager)
+    {
+        return configManager.getConfig(ValianceConfig.class);
+    }
+
+    @Subscribe
+    public void onPlayerChanged(PlayerChanged playerChanged)
+    {
+        if (playerChanged.getPlayer().getId() == client.getLocalPlayer().getId())
+            MessageHeaderData.setPlayerName(client.getLocalPlayer().getName());
+    }
+}

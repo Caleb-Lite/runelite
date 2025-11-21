@@ -1,0 +1,13 @@
+package net.runelite.client.plugins.pluginhub.net.wiseoldman;
+
+import net.runelite.client.RuneLite;
+import net.runelite.client.externalplugins.ExternalPluginManager;
+
+public class WomUtilsPluginTest
+{
+	public static void main(String[] args) throws Exception
+	{
+		ExternalPluginManager.loadBuiltin(WomUtilsPlugin.class);
+		RuneLite.main(args);
+	}
+}

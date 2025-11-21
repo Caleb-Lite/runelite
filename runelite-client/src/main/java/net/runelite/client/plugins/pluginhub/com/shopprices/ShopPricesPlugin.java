@@ -1,0 +1,172 @@
+package net.runelite.client.plugins.pluginhub.com.shopprices;
+
+import com.google.common.reflect.TypeToken;
+import com.google.gson.Gson;
+import com.google.inject.Provides;
+import lombok.Getter;
+import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.Client;
+import net.runelite.api.ItemComposition;
+import net.runelite.api.ScriptID;
+import net.runelite.api.events.MenuOptionClicked;
+import net.runelite.api.events.ScriptPreFired;
+import net.runelite.api.events.VarbitChanged;
+import net.runelite.api.events.WidgetClosed;
+import net.runelite.api.gameval.InterfaceID;
+import net.runelite.api.widgets.Widget;
+import net.runelite.client.config.ConfigManager;
+import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.game.ItemManager;
+import net.runelite.client.plugins.Plugin;
+import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.ui.overlay.OverlayManager;
+import net.runelite.client.ui.overlay.tooltip.TooltipManager;
+
+import javax.inject.Inject;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.lang.reflect.Type;
+import java.util.HashMap;
+import java.util.Map;
+
+@Slf4j
+@PluginDescriptor(
+    name = "Shop Prices",
+    description = "Display prices for items in NPC shops.",
+    tags = {"qol", "shop", "prices", "overlay"}
+)
+public class ShopPricesPlugin extends Plugin {
+    @Inject
+    private Client client;
+
+    @Inject
+    private ItemManager itemManager;
+
+    @Inject
+    private OverlayManager overlayManager;
+
+    @Inject
+    private TooltipManager tooltipManager;
+
+    @Inject
+    private ShopPricesOverlay shopPricesOverlay;
+
+    @Getter
+    @Inject
+    private ShopPricesConfig config;
+
+    @Inject
+    private Gson gson;
+
+    private static final int SHOP_SCROLL_HEIGHT = 235;
+    private static final int SHOP_MAIN_INIT = 1074;
+    private static final int SHOP_QUANTITY_VARP_ID = 1022;
+    private static final String SHOPS_RESOURCE = "shops.json";
+    private static final Type SHOP_TYPE = new TypeToken<Map<String, Shop>>(){}.getType();
+    public Map<String, Shop> shopsMap = new HashMap<>();
+    public Shop activeShop = null;
+
+    @Provides
+    ShopPricesConfig provideConfig(ConfigManager configManager) {
+        return configManager.getConfig(ShopPricesConfig.class);
+    }
+
+    @Override
+    protected void startUp() {
+        InputStream stream = getClass().getClassLoader().getResourceAsStream(SHOPS_RESOURCE);
+
+        if (stream == null) {
+            throw new IllegalArgumentException("Resource not found.");
+        }
+
+        try (InputStreamReader reader = new InputStreamReader(stream)) {
+            this.shopsMap = gson.fromJson(reader, SHOP_TYPE);
+            this.overlayManager.add(this.shopPricesOverlay);
+        } catch (IOException e) {
+            log.error("Failed to read JSON file \"{}\": {}", SHOPS_RESOURCE, e.getMessage());
+        }
+    }
+
+    @Override
+    protected void shutDown() {
+        this.overlayManager.remove(this.shopPricesOverlay);
+        this.shopsMap.clear();
+    }
+
+    @Subscribe
+    protected void onWidgetClosed(WidgetClosed event) {
+        if (event.getGroupId() == InterfaceID.SHOPMAIN) {
+            log.debug("Closing shop \"{}\".", this.activeShop);
+            this.activeShop = null;
+        }
+    }
+
+    @Subscribe
+    protected void onScriptPreFired(ScriptPreFired event) {
+        if (event.getScriptId() == SHOP_MAIN_INIT) {
+           // [clientscript,shop_main_init](inv $inv0, string $string0, obj $obj1, int $int2, boolean $boolean3)
+            String name = (String) event.getScriptEvent().getArguments()[2];
+            String shopKey = Shop.formatShopName(name);
+
+            this.activeShop = shopsMap.get(shopKey);
+            log.debug("Opened shop \"{}\". ({})", name, shopKey);
+        }
+
+        Widget itemsWidget = client.getWidget(InterfaceID.Shopmain.ITEMS);
+
+        if (itemsWidget != null && event.getScriptId() == ScriptID.UPDATE_SCROLLBAR) {
+            Widget scrollbar = client.getWidget(InterfaceID.Shopmain.SCROLLBAR);
+
+            if (scrollbar != null && scrollbar.isHidden()) {
+                itemsWidget.setScrollHeight(0);
+                itemsWidget.revalidateScroll();
+                return;
+            }
+
+            itemsWidget.setScrollHeight(SHOP_SCROLL_HEIGHT);
+            itemsWidget.revalidateScroll();
+        }
+    }
+
+    @Subscribe
+    protected void onVarbitChanged(VarbitChanged event) {
+        // Varbit ID: 6348
+        if (event.getVarpId() == SHOP_QUANTITY_VARP_ID) {
+            this.activeShop.quantityOption = ShopQuantity.getById(event.getValue());
+            log.debug("Shop quantity option set to \"{}\". ({})", event.getValue(), this.activeShop.quantityOption.getOption());
+        }
+    }
+
+    @Subscribe
+    protected void onMenuOptionClicked(MenuOptionClicked event) {
+        if (this.activeShop == null) {
+            return;
+        }
+
+        if (!Shop.MENU_OPTIONS.contains(event.getMenuOption())) {
+            return;
+        }
+
+        if (this.config.blockOnThreshold()) {
+            Widget eventWidget = event.getWidget();
+
+            if (eventWidget == null) {
+                return;
+            }
+
+            ItemComposition itemComposition = itemManager.getItemComposition(event.getItemId());
+            int multiplierThreshold = this.config.priceThreshold();
+            int currentStock = eventWidget.getItemQuantity();
+
+            if (this.activeShop.isPriceAtThreshold(itemComposition, multiplierThreshold, currentStock)) {
+                event.consume();
+                return;
+            }
+
+            if (this.config.blockCheckQuantity() && this.activeShop.isQuantityAtThreshold(itemComposition, multiplierThreshold, currentStock)) {
+                event.consume();
+            }
+        }
+    }
+}

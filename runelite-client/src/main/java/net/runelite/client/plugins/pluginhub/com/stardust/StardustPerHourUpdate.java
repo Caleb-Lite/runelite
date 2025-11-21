@@ -1,0 +1,17 @@
+package net.runelite.client.plugins.pluginhub.com.stardust;
+
+public class StardustPerHourUpdate
+{
+    private double stardustPerHour;
+
+    public StardustPerHourUpdate(double stardustPerHour)
+    {
+        this.stardustPerHour = stardustPerHour;
+    }
+
+    public double getStardustPerHour()
+    {
+        return stardustPerHour;
+    }
+}
+

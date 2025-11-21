@@ -1,0 +1,16 @@
+package net.runelite.client.plugins.pluginhub.tictac7x.charges.items.potions;
+
+import net.runelite.client.plugins.pluginhub.tictac7x.charges.item.triggers.TriggerItem;
+import net.runelite.client.plugins.pluginhub.tictac7x.charges.store.ids.ItemId;
+import net.runelite.client.plugins.pluginhub.tictac7x.charges.store.Provider;
+
+public class P_Restore extends _Potion {
+    public P_Restore(final Provider provider) {
+        super("restore", new TriggerItem[]{
+            new TriggerItem(ItemId.RESTORE_POTION_1).fixedCharges(1),
+            new TriggerItem(ItemId.RESTORE_POTION_2).fixedCharges(2),
+            new TriggerItem(ItemId.RESTORE_POTION_3).fixedCharges(3),
+            new TriggerItem(ItemId.RESTORE_POTION_4).fixedCharges(4),
+        }, provider);
+    }
+}

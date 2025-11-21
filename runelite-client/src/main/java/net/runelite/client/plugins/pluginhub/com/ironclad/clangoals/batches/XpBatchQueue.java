@@ -1,0 +1,27 @@
+package net.runelite.client.plugins.pluginhub.com.ironclad.clangoals.batches;
+
+import net.runelite.client.plugins.pluginhub.com.ironclad.clangoals.service.ApiService;
+import lombok.Setter;
+
+@Setter
+public class XpBatchQueue extends BatchQueue
+{
+    private ApiService api;
+    private long account;
+
+    @Override
+    public void flush()
+    {
+        // Extra check to limit abnormal requests.
+        if (items.isEmpty()) return;
+
+        // Pass items onto API service to deal with
+        // data transformation and request handling.
+        this.api.batchUpdateXp(
+                this.account,
+                items
+        );
+
+        this.resetQueue();
+    }
+}

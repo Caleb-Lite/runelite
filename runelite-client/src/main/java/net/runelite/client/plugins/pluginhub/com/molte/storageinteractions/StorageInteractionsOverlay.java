@@ -1,0 +1,137 @@
+package net.runelite.client.plugins.pluginhub.com.molte.storageinteractions;
+
+import net.runelite.client.plugins.pluginhub.com.molte.storageinteractions.settings.StorageInteractionsConfig;
+import net.runelite.api.Client;
+import net.runelite.api.Point;
+import net.runelite.client.ui.overlay.*;
+
+import javax.inject.Inject;
+import java.awt.*;
+import java.awt.font.FontRenderContext;
+import java.awt.font.TextLayout;
+import java.awt.geom.AffineTransform;
+import java.awt.image.AffineTransformOp;
+import java.awt.image.BufferedImage;
+import java.awt.image.BufferedImageOp;
+
+
+public class StorageInteractionsOverlay extends Overlay
+{
+    private static Font FONT = new Font("Arial", Font.BOLD, 14);
+
+    private final Client _client;
+    private String _renderText = null;
+
+    private BufferedImage _bankNoteImage;
+    private BufferedImage _baseBankNoteImage;
+    private boolean _showBankNote = false;
+
+    private BufferedImage _placeholderImage;
+    private BufferedImage _basePlaceholderImage;
+    private boolean _showPlaceholder = false;
+
+    @Inject
+    private StorageInteractionsConfig _config;
+
+    @Inject
+    StorageInteractionsOverlay(Client client){
+        _client = client;
+
+        setPriority(OverlayPriority.HIGHEST);
+        setPosition(OverlayPosition.DYNAMIC);
+        setLayer(OverlayLayer.ALWAYS_ON_TOP);
+    }
+
+    @Override
+    public Dimension render(Graphics2D graphics2D) {
+        final Point mousePosition = _client.getMouseCanvasPosition();
+        final int overlayX = mousePosition.getX() + _config.overlayOffsetX();
+        final int overlayY = mousePosition.getY() + _config.overlayOffsetY();
+
+        if (_showBankNote && _bankNoteImage != null) {
+            graphics2D.drawImage(
+                    _bankNoteImage,
+                    overlayX + _config.overlaySize().getBankNoteXOffset(),
+                    overlayY + _config.overlaySize().getBankNoteYOffset(),
+                    null);
+        }
+
+        if (_config.showPlaceholder() && _showPlaceholder && _placeholderImage != null) {
+            graphics2D.drawImage(
+                    _placeholderImage,
+                    overlayX + _config.overlaySize().getPlaceholderXOffset(),
+                    overlayY + _config.overlaySize().getPlaceholderYOffset(),
+                    null);
+        }
+
+        if (_renderText != null) {
+            AffineTransform transform = graphics2D.getTransform();
+            transform.translate(
+                    overlayX + _config.overlaySize().getFontXOffset(),
+                    overlayY + _config.overlaySize().getFontYOffset());
+            graphics2D.transform(transform);
+            graphics2D.setColor(_config.fontOutLineColor());
+            FontRenderContext frc = graphics2D.getFontRenderContext();
+            TextLayout tl = new TextLayout(_renderText, FONT, frc);
+            Shape shape = tl.getOutline(null);
+            graphics2D.setStroke(new BasicStroke(_config.overlaySize().getFontOutlineThickness()));
+            graphics2D.draw(shape);
+            graphics2D.setColor(_config.fontColor());
+            graphics2D.fill(shape);
+        }
+
+        return null;
+    }
+
+    public void setRenderText(String text){
+        _renderText = text;
+    }
+
+    public void setBankNoteImage(BufferedImage bankNoteImage)
+    {
+        if (bankNoteImage != null){
+            _baseBankNoteImage = bankNoteImage;
+        }
+
+        if (_baseBankNoteImage == null){
+            return;
+        }
+        _bankNoteImage = scaleImage(_baseBankNoteImage, _config.overlaySize().getBankNoteWidth(), _config.overlaySize().getBankNoteHeight());
+    }
+
+    public void setPlaceholderImage(BufferedImage placeholderImage){
+        if (placeholderImage != null){
+            _basePlaceholderImage = placeholderImage;
+        }
+
+        if (_basePlaceholderImage == null){
+            return;
+        }
+        _placeholderImage = scaleImage(_basePlaceholderImage, _config.overlaySize().getPlaceholderWidth(), _config.overlaySize().getPlaceholderHeight());
+    }
+
+    public void setShowBankNoteImage(boolean state)
+    {
+        _showBankNote = state;
+    }
+
+    public void setShowPlaceholderImage(boolean state){
+        _showPlaceholder = state;
+    }
+
+    public void updateConfig(){
+        FONT = new Font("Arial", Font.BOLD, _config.overlaySize().getFontSize());
+        setBankNoteImage(null);
+        setPlaceholderImage(null);
+    }
+
+    private BufferedImage scaleImage(BufferedImage bufferedImage, int newWidth, int newHeight){
+        double scaleX = (double) newWidth / bufferedImage.getWidth();
+        double scaleY = (double) newHeight / bufferedImage.getHeight();
+
+        AffineTransform tx = AffineTransform.getScaleInstance(scaleX, scaleY);
+        BufferedImageOp op = new AffineTransformOp(tx, AffineTransformOp.TYPE_NEAREST_NEIGHBOR);
+
+        return op.filter(bufferedImage, null);
+    }
+}

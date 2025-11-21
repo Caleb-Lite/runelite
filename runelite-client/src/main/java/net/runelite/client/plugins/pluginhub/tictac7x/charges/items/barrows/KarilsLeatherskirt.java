@@ -1,0 +1,19 @@
+package net.runelite.client.plugins.pluginhub.tictac7x.charges.items.barrows;
+
+import net.runelite.client.plugins.pluginhub.tictac7x.charges.store.ids.ItemId;
+import net.runelite.client.plugins.pluginhub.tictac7x.charges.item.triggers.TriggerItem;
+import net.runelite.client.plugins.pluginhub.tictac7x.charges.store.Provider;
+
+public class KarilsLeatherskirt extends _BarrowsItem {
+    public KarilsLeatherskirt(final Provider provider) {
+        super("Karil's skirt", ItemId.KARILS_LEATHERSKIRT, provider);
+        this.items = new TriggerItem[]{
+            new TriggerItem(ItemId.KARILS_LEATHERSKIRT).fixedCharges(1000),
+            new TriggerItem(ItemId.KARILS_LEATHERSKIRT_100),
+            new TriggerItem(ItemId.KARILS_LEATHERSKIRT_75),
+            new TriggerItem(ItemId.KARILS_LEATHERSKIRT_50),
+            new TriggerItem(ItemId.KARILS_LEATHERSKIRT_25),
+            new TriggerItem(ItemId.KARILS_LEATHERSKIRT_0).fixedCharges(0)
+        };
+    }
+}

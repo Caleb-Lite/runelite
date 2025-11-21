@@ -1,0 +1,118 @@
+package net.runelite.client.plugins.pluginhub.com.duckblade.osrs.toa.features.hporbs;
+
+import com.google.common.base.Strings;
+import java.awt.Color;
+import java.awt.Dimension;
+import java.awt.FontMetrics;
+import java.awt.Graphics2D;
+import java.awt.Point;
+import java.awt.Rectangle;
+import lombok.Getter;
+import lombok.Setter;
+import net.runelite.client.ui.overlay.components.ComponentConstants;
+import net.runelite.client.ui.overlay.components.LayoutableRenderableEntity;
+import net.runelite.client.ui.overlay.components.TextComponent;
+
+@Setter
+public class DoubleHpBarComponent implements LayoutableRenderableEntity
+{
+
+	private static final Color COLOUR_HEALTH = new Color(0, 146, 54, 230);
+	private static final Color COLOUR_HURT = new Color(102, 15, 16, 230);
+	private static final Color COLOUR_DEAD = Color.DARK_GRAY;
+	private static final Color COLOUR_NAME = Color.WHITE;
+
+	private double value1;
+	private String centerLabel1;
+	private double value2;
+	private String centerLabel2;
+	private Point preferredLocation = new Point();
+	private Dimension preferredSize = new Dimension(ComponentConstants.STANDARD_WIDTH, 16);
+	private int gap = 3;
+
+	@Getter
+	private final Rectangle bounds = new Rectangle();
+
+	@Override
+	public Dimension render(Graphics2D graphics)
+	{
+		final int baseX = preferredLocation.x;
+		final int baseY = preferredLocation.y;
+
+		final int totalWidth = preferredSize.width;
+		final int totalHeight = Math.max(preferredSize.height, 16);
+
+		final int barWidth = (totalWidth - gap) / 2;
+
+		drawBar(
+			graphics,
+			centerLabel1,
+			value1,
+			baseX,
+			baseY,
+			barWidth,
+			totalHeight
+		);
+
+		if (!Strings.isNullOrEmpty(centerLabel2))
+		{
+			drawBar(
+				graphics,
+				centerLabel2,
+				value2,
+				baseX + barWidth + gap,
+				baseY,
+				barWidth,
+				totalHeight
+			);
+		}
+
+		final Dimension dimension = new Dimension(totalWidth, totalHeight);
+		bounds.setLocation(preferredLocation);
+		bounds.setSize(dimension);
+		return dimension;
+	}
+
+	private void drawBar(Graphics2D graphics, String name, double value, int baseX, int baseY, int width, int height)
+	{
+		final FontMetrics metrics = graphics.getFontMetrics();
+		if (metrics.stringWidth(name) > width)
+		{
+			name = trimmedName(metrics, name, width);
+		}
+
+		final int progressFill = (int) (width * Math.min(1, value));
+		final int progressTextX = baseX + (width - metrics.stringWidth(name)) / 2;
+		final int progressTextY = baseY + ((height - metrics.getHeight()) / 2) + metrics.getHeight();
+
+		if (value < 0)
+		{
+			graphics.setColor(COLOUR_DEAD);
+			graphics.fillRect(baseX, baseY, width, height);
+		}
+		else
+		{
+			graphics.setColor(COLOUR_HURT);
+			graphics.fillRect(baseX, baseY, width, height);
+			graphics.setColor(COLOUR_HEALTH);
+			graphics.fillRect(baseX, baseY, progressFill, height);
+		}
+
+		final TextComponent textComponent1 = new TextComponent();
+		textComponent1.setPosition(new Point(progressTextX, progressTextY));
+		textComponent1.setColor(COLOUR_NAME);
+		textComponent1.setText(name);
+		textComponent1.render(graphics);
+	}
+
+	private static String trimmedName(FontMetrics metrics, String name, int maxWidth)
+	{
+		String runningName = name;
+		while (metrics.stringWidth(runningName + "...") > maxWidth)
+		{
+			runningName = runningName.substring(0, runningName.length() - 1);
+		}
+
+		return runningName + "...";
+	}
+}

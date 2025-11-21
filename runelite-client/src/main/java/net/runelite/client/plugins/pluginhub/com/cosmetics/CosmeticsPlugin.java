@@ -1,0 +1,144 @@
+package net.runelite.client.plugins.pluginhub.com.cosmetics;
+
+import com.google.inject.Provides;
+import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.*;
+import net.runelite.api.events.ChatMessage;
+import net.runelite.api.events.GameTick;
+import net.runelite.api.events.PlayerChanged;
+import net.runelite.api.events.VarbitChanged;
+import net.runelite.client.config.ConfigManager;
+import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.plugins.Plugin;
+import net.runelite.client.plugins.PluginDescriptor;
+
+import javax.inject.Inject;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+
+@Slf4j
+@PluginDescriptor(
+	name = "Cosmetics",
+	description = "Allows users to customize their appearance",
+	tags = {"cosmetics", "players"}
+)
+public class CosmeticsPlugin extends Plugin {
+	public static String CHAT_COMMAND = "!cosmetics";
+	private final int FREQUENCY = 3;
+
+	@Inject
+	private Client client;
+
+	@Inject
+	private CosmeticsConfig config;
+
+	@Provides
+	CosmeticsConfig getConfig(ConfigManager configManager)
+	{
+		return configManager.getConfig(CosmeticsConfig.class);
+	}
+
+
+	private boolean isPvp = false;
+	private boolean wasPvp = false;
+	private boolean enabled = false;
+	private final CosmeticsCache cache = new CosmeticsCache();
+
+	private final HashMap<String, int[]> preTransform = new HashMap<>();
+	private final HashMap<String, int[]> postTransform = new HashMap<>();
+	private int timer = 0;
+
+	@Override
+	protected void startUp()
+	{
+		enabled = true;
+		process();
+	}
+
+	@Subscribe
+	public void onChatMessage(ChatMessage event) {
+		if (enabled && event.getMessage().toLowerCase().startsWith(CHAT_COMMAND) && !config.apiKey().isEmpty()) {
+			for (Player p : client.getPlayers()) {
+				if (p.getName()!= null && p.getName().equals(event.getName())) {
+					wipe(p.getName(), p.getPlayerComposition().getEquipmentIds());
+					cache.save(new CosmeticsPlayer(p), config.apiKey());
+					break;
+				}
+			}
+		}
+	}
+
+	@Override
+	protected void shutDown()
+	{
+		enabled = false;
+		process();
+	}
+
+	@Subscribe
+	public void onGameTick(GameTick gt)
+	{
+		timer++;
+		if ((isPvp == wasPvp && timer < FREQUENCY) || !enabled) {
+			return;
+		}
+		timer = 0;
+		process();
+		cache.clear();
+	}
+
+	private void wipe(String name, int[] equipmentIds) {
+		if (postTransform.containsKey(name) && !Arrays.equals(postTransform.get(name), equipmentIds)) {
+			preTransform.put(name, equipmentIds.clone());
+		}
+		int[] newIds = preTransform.get(name);
+		System.arraycopy(newIds, 0, equipmentIds, 0, newIds.length);
+	}
+
+	private void process() {
+		try {
+			ArrayList<String> allNames = new ArrayList<>();
+			for (Player player : client.getPlayers()) {
+				allNames.add(player.getName());
+				PlayerComposition comp = player.getPlayerComposition();
+				int[] equipmentIds = comp.getEquipmentIds();
+				String name = player.getName();
+				if (!preTransform.containsKey(name)) {
+					preTransform.put(name, equipmentIds.clone());
+				}
+				if (isPvp || !enabled) {
+					//in PvP we should _not_ show cosmetics
+					wipe(name, equipmentIds);
+				} else {
+					if (postTransform.containsKey(name) && !Arrays.equals(postTransform.get(name), equipmentIds)) {
+						preTransform.put(name, equipmentIds.clone());
+					}
+					CosmeticsPlayer p = cache.getCosmetics(player.getName());
+					if (p != null) {
+						p.write(equipmentIds);
+					}
+					postTransform.put(name, equipmentIds.clone());
+				}
+				comp.setHash();
+			}
+			cache.fillCache(allNames.toArray(new String[0]));
+		}
+		catch (Exception e) {
+			log.debug("Sad: " + e.toString());
+			e.printStackTrace();
+		}
+	}
+
+	@Subscribe
+	public void onVarbitChanged(VarbitChanged event) {
+		wasPvp = isPvp;
+		isPvp = client.getVar(Varbits.PVP_SPEC_ORB) != 0;
+	}
+
+	@Subscribe
+	public void onPlayerChanged(PlayerChanged event) {
+		timer = FREQUENCY;
+	}
+}
+

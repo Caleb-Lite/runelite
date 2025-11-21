@@ -1,0 +1,338 @@
+package net.runelite.client.plugins.pluginhub.com.cluedetails;
+
+import net.runelite.client.plugins.pluginhub.com.cluedetails.filters.ClueTier;
+import java.awt.Color;
+import java.util.Collections;
+import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLong;
+import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
+import net.runelite.api.ItemID;
+import net.runelite.api.TileItem;
+import net.runelite.api.coords.WorldPoint;
+import net.runelite.client.config.ConfigManager;
+import net.runelite.client.util.QuantityFormatter;
+import org.apache.commons.text.WordUtils;
+
+@Data
+public class ClueInstance
+{
+	private static final AtomicLong sequenceGenerator = new AtomicLong();
+
+	@Setter
+	private List<Integer> clueIds; // Fake ID from ClueText
+	private final int itemId; // Clue item ID
+	private final WorldPoint location; // Null if in inventory
+
+	@Getter
+	@Setter
+	private long sequenceNumber;
+
+	private Integer timeToDespawnFromDataInTicks;
+	private TileItem tileItem;
+	private boolean isNewClue;
+
+	// Constructor for clues from config
+	public ClueInstance(ClueInstanceData data)
+	{
+		this.clueIds = data.getClueIds();
+		this.itemId = data.getItemId();
+		this.location = data.getLocation();
+		// if had on then turned off in same session, we don't know what happened in meantime.
+		// Ticks go forward even when logged into other game modes. For simplicity we assume when
+		// Loaded we just are starting from the exact same despawn time remaining.
+		this.timeToDespawnFromDataInTicks = data.getDespawnTick();
+
+		this.sequenceNumber = sequenceGenerator.getAndIncrement();
+	}
+
+	// Constructor for inventory clues from inventory changed event
+	public ClueInstance(List<Integer> clueIds, int itemId)
+	{
+		this.clueIds = clueIds;
+		this.itemId = itemId;
+		this.location = null;
+		this.timeToDespawnFromDataInTicks = -1;
+
+		this.sequenceNumber = sequenceGenerator.getAndIncrement();
+	}
+
+	// Constructor for ground clues
+	public ClueInstance(List<Integer> clueIds, int itemId, WorldPoint location, TileItem tileItem, int currentTick)
+	{
+		this.clueIds = clueIds;
+		this.itemId = itemId;
+		this.location = location;
+		this.tileItem = tileItem;
+		this.timeToDespawnFromDataInTicks = tileItem.getDespawnTime();
+
+		this.sequenceNumber = sequenceGenerator.getAndIncrement();
+	}
+
+	// New clue on floor
+	public ClueInstance(List<Integer> clueIds, int itemId, WorldPoint location, TileItem tileItem, boolean isNewClue)
+	{
+		this.clueIds = clueIds;
+		this.itemId = itemId;
+		this.location = location;
+		this.tileItem = tileItem;
+		this.timeToDespawnFromDataInTicks = tileItem.getDespawnTime() - 2;
+		this.isNewClue = isNewClue;
+
+		this.sequenceNumber = sequenceGenerator.getAndIncrement();
+	}
+
+	public List<Integer> getClueIds()
+	{
+		if (clueIds.isEmpty() && !Clues.isBeginnerOrMasterClue(itemId, true))
+		{
+			return Collections.singletonList(itemId);
+		}
+		return clueIds;
+	}
+
+	public List<Integer> getUniqueIds()
+	{
+		if (clueIds.isEmpty())
+		{
+			return Collections.singletonList(itemId);
+		}
+
+		return clueIds;
+	}
+
+	public ClueTier getTier()
+	{
+		Clues clue;
+
+		if (clueIds.isEmpty())
+		{
+			clue = Clues.forItemId(itemId);
+		}
+		else
+		{
+			clue = Clues.forClueId(getClueIds().get(0));
+		}
+
+		if (clue == null)
+		{
+			if (itemId == ItemID.CLUE_SCROLL_BEGINNER) return ClueTier.BEGINNER;
+			if (itemId == ItemID.CLUE_SCROLL_MASTER) return ClueTier.MASTER;
+			return null;
+		}
+		return clue.getClueTier();
+	}
+
+	public String getGroundText(ClueDetailsPlugin plugin, ClueDetailsConfig config, ConfigManager configManager, int quantity)
+	{
+		StringBuilder itemStringBuilder = new StringBuilder();
+		List<Integer> clueIds = this.getClueIds();
+		String clueText;
+
+		if (clueIds.isEmpty())
+		{
+			if (this.getTier() == null)
+			{
+				clueText = "";
+			}
+			else
+			{
+				clueText = WordUtils.capitalizeFully(this.getTier().toString().replace("_", " "));
+			}
+		}
+		else
+		{
+			int clueId = this.getClueIds().get(0);
+			Clues clueDetails = Clues.forClueIdFiltered(clueId);
+
+			if (clueDetails == null)
+			{
+				return null;
+			}
+
+			if (config.changeGroundClueText() && !config.collapseGroundCluesByTier())
+			{
+				if (clueIds.size() > 1)
+				{
+					clueText = "Three-step (master)";
+				}
+				else
+				{
+					clueText = clueDetails.getDetail(configManager);
+				}
+			}
+			else
+			{
+				clueText = WordUtils.capitalizeFully(clueDetails.getClueTier().toString().replace("_", " "));
+			}
+		}
+		itemStringBuilder.append(clueText);
+
+		if ((config.collapseGroundClues() || config.collapseGroundCluesByTier()) && quantity > 1)
+		{
+			itemStringBuilder.append(" (")
+				.append(QuantityFormatter.quantityToStackSize(quantity))
+				.append(')');
+		}
+		return itemStringBuilder.toString();
+	}
+
+	public Color getGroundColor(ClueDetailsConfig config, ConfigManager configManager)
+	{
+		Color color = Color.WHITE;
+		List<Integer> clueIds = this.getClueIds();
+
+		if (!clueIds.isEmpty())
+		{
+			int clueId = this.getClueIds().get(0);
+			Clues clueDetails = Clues.forClueIdFiltered(clueId);
+
+			if (clueDetails == null)
+			{
+				return color;
+			}
+
+			if (config.colorGroundClues())
+			{
+				color = clueDetails.getDetailColor(configManager);
+			}
+		}
+		return color;
+	}
+
+	public void updateDespawnTick()
+	{
+		if (tileItem != null)
+		{
+			this.timeToDespawnFromDataInTicks = tileItem.getDespawnTime();
+		}
+	}
+
+	public int getDespawnTick()
+	{
+		if (tileItem != null)
+		{
+			return tileItem.getDespawnTime();
+		}
+		return timeToDespawnFromDataInTicks;
+	}
+
+	// Theory: This should mean that tiles we've seen have TileItem, and the actual despawn is used for ALL items on that tile
+	// For tiles we've not seen this session, all items on it should have no TileItem, and thus we'll keep the same consistent tick diff
+	public int getTicksToDespawnConsideringTileItem(int currentTick)
+	{
+		return timeToDespawnFromDataInTicks == null ? -1 : timeToDespawnFromDataInTicks;
+	}
+
+	public String getCombinedClueText(ConfigManager configManager, boolean showColor, boolean isFloorText)
+	{
+		StringBuilder returnText = new StringBuilder();
+		boolean isFirst = true;
+		for (Integer clueId : getClueIds())
+		{
+			Clues cluePart = Clues.forClueId(clueId);
+			if (cluePart == null) continue;
+			if (isFirst)
+			{
+				isFirst = false;
+			}
+			else
+			{
+				returnText.append("<br>");
+			}
+
+			if (showColor)
+			{
+				Color color = cluePart.getDetailColor(configManager);
+
+				// Only change floor text color if it's not the default
+				if (!(isFloorText && color == Color.WHITE))
+				{
+					String hexColor = Integer.toHexString(color.getRGB()).substring(2);
+					returnText.append("<col=").append(hexColor).append(">");
+				}
+			}
+
+			returnText.append(cluePart.getDetail(configManager));
+		}
+		if (returnText.length() == 0) return null;
+		return returnText.toString();
+	}
+
+	public boolean isEnabled(ClueDetailsConfig config)
+	{
+		if (Clues.DEV_MODE_IDS.contains(itemId))
+		{
+			return config.beginnerDetails();
+		}
+		else if (getTier() == ClueTier.BEGINNER)
+		{
+			return config.beginnerDetails();
+		}
+		else if (getTier() == ClueTier.EASY)
+		{
+			return config.easyDetails();
+		}
+		else if (getTier() == ClueTier.MEDIUM)
+		{
+			return config.mediumDetails();
+		}
+		else if (getTier() == ClueTier.HARD)
+		{
+			return config.hardDetails();
+		}
+		else if (getTier() == ClueTier.ELITE)
+		{
+			return config.eliteDetails();
+		}
+		else if (getTier() == ClueTier.MASTER)
+		{
+			return config.masterDetails();
+		}
+		else return getTier() != null;
+	}
+
+	@Override
+	public boolean equals(Object o)
+	{
+		if (this == o) return true;
+		if (!(o instanceof ClueInstance)) return false;
+		ClueInstance clueInstance = (ClueInstance) o;
+
+		int diff1;
+		int diff2;
+		if (tileItem != null && clueInstance.tileItem != null)
+		{
+			diff1 = tileItem.getDespawnTime();
+			diff2 = clueInstance.tileItem.getDespawnTime();
+		}
+		else if (tileItem == null && clueInstance.tileItem == null)
+		{
+			diff1 = getDespawnTick();
+			diff2 = clueInstance.getDespawnTick();
+		}
+		else
+		{
+			return false;
+		}
+		// Should this really be considering it equal without consideration for the clueIds?
+		if (location == null) return false;
+		return itemId == clueInstance.itemId && diff1 == diff2 && location.equals(clueInstance.location);
+	}
+
+	@Override
+	public int hashCode()
+	{
+		int despawnTime = getDespawnTick();
+		return Objects.hash(itemId, despawnTime, location);
+	}
+
+	@Override
+	public String toString()
+	{
+		int despawnTime = getDespawnTick();
+		return "ClueInstance{" + "itemId=" + itemId + ", despawnTick=" + despawnTime + ", worldPoint=" + location + ", orderId=" + sequenceNumber + "}";
+	}
+}

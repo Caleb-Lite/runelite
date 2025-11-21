@@ -1,0 +1,233 @@
+package net.runelite.client.plugins.pluginhub.com.WintertodtSoloHelper;
+
+import net.runelite.client.config.*;
+
+import java.awt.*;
+
+@ConfigGroup("wintertodt-afk")
+public interface WintertodtSoloHelperConfig extends Config
+{
+    @ConfigItem(
+            position = 0,
+            keyName = "showOverlay",
+            name = "Show Overlay",
+            description = "Toggles the status overlay"
+    )
+    default boolean showOverlay()
+    {
+        return true;
+    }
+
+    //highlight game objects
+    @ConfigItem(
+            position = 1,
+            keyName = "highlightObjects",
+            name = "Highlight Objects",
+            description = "Highlights objects"
+    )
+    default boolean highlightObjects()
+    {
+        return true;
+    }
+
+    //highlight player when inventory actions needed
+    @ConfigItem(
+            position = 2,
+            keyName = "highlightPlayer",
+            name = "Highlight Player",
+            description = "Highlights player when inventory actions needed"
+    )
+    default boolean highlightPlayer()
+    {
+        return true;
+    }
+
+    // What point goal before ending
+    @ConfigItem(
+            position = 2,
+            keyName = "pointGoal",
+            name = "Point Goal",
+            description = "What point goal before ending"
+    )
+    @Range(
+            min = 0,
+            max = 13500
+    )
+    default int pointGoal()
+    {
+        return 13500;
+    }
+
+    // which brazier you prefer to use
+    @ConfigItem(
+            position = 3,
+            keyName = "brazier",
+            name = "Brazier",
+            description = "Which brazier you prefer to use"
+    )
+    default BrazierLocation brazier()
+    {
+        return BrazierLocation.SouthEast;
+    }
+
+    @Alpha
+    @ConfigItem(
+            keyName = "overlayColor",
+            name = "Highlight Color",
+            description = "Color of highlights",
+            position = 5
+    )
+    default Color getHighlightColor()
+    {
+        return Color.RED;
+    }
+
+    @ConfigSection(
+            name = "Percentages",
+            description = "All the options for how you solo Wintertodt",
+            position = 6,
+            closedByDefault = false
+    )
+    String percentages = "percentages";
+
+    // Minimum Relight Health
+    @ConfigItem(
+            position = 0,
+            keyName = "minRelightHealth",
+            name = "Minimum Relight Health",
+            description = "Minimum health to relight the main brazier",
+            section = percentages
+    )
+    @Range(
+            min = 1,
+            max = 100
+    )
+    @Units(Units.PERCENT)
+    default int minRelightHealth()
+    {
+        return 6;
+    }
+
+    // Always Relight Health
+    @ConfigItem(
+            position = 1,
+            keyName = "alwaysRelightHealth",
+            name = "Always Relight Health",
+            description = "Always relight the fire above this health",
+            section = percentages
+    )
+    @Range(
+            min = 2,
+            max = 100
+    )
+    @Units(Units.PERCENT)
+    default int alwaysRelightHealth()
+    {
+        return 11;
+    }
+
+    // what percentage to relight multiple fires
+    @ConfigItem(
+            position = 2,
+            keyName = "multiFireRelightPercentage",
+            name = "Multi Fire Relight Percentage",
+            description = "What percentage to relight multiple fires",
+            section = percentages
+    )
+    @Range(
+            min = 2,
+            max = 100
+    )
+    @Units(Units.PERCENT)
+    default int multiFireRelightPercentage()
+    {
+        return 25;
+    }
+
+    @ConfigSection(
+            name = "Items",
+            description = "Should the plugin highlight crates for hammers, knifes, etc",
+            position = 7,
+            closedByDefault = true
+    )
+    String items = "items";
+
+    // Should warn for hammer
+    @ConfigItem(
+            position = 0,
+            keyName = "warnForHammer",
+            name = "Warn for Hammer",
+            description = "Warns you if you don't have a hammer",
+            section = items
+    )
+    default boolean warnForHammer()
+    {
+        return true;
+    }
+
+    // should warn for knife
+    @ConfigItem(
+            position = 1,
+            keyName = "warnForKnife",
+            name = "Warn for Knife",
+            description = "Warns and highlights you if you don't have a knife",
+            section = items
+    )
+    default boolean warnForKnife()
+    {
+        return true;
+    }
+
+    //should warn for tinderbox
+    @ConfigItem(
+            position = 2,
+            keyName = "warnForTinderbox",
+            name = "Warn for Tinderbox",
+            description = "Warns and highlights you if you don't have a tinderbox",
+            section = items
+    )
+    default boolean warnForTinderbox()
+    {
+        return true;
+    }
+
+    //min potion dose
+    @ConfigItem(
+            position = 3,
+            keyName = "minPotionDose",
+            name = "Minimum Potion Dose",
+            description = "Warns and highlights when you have less than this many doses of bruma potion",
+            section = items
+    )
+    @Range(
+            min = 0,
+            max = 40
+    )
+    default int minPotionDose()
+    {
+        return 4;
+    }
+
+    @ConfigSection(
+            name = "Misc",
+            description = "Miscellaneous options",
+            position = 6,
+            closedByDefault = true
+    )
+    String misc = "misc";
+
+    //always repair broken
+    @ConfigItem(
+            position = 0,
+            keyName = "alwaysRepairBroken",
+            name = "Always Repair Broken",
+            description = "Always repair broken brazier",
+            section = misc
+    )
+    default boolean alwaysRepairBroken()
+    {
+        return true;
+    }
+
+
+}

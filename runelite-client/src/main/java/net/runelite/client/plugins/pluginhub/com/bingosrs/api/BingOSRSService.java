@@ -1,0 +1,266 @@
+package net.runelite.client.plugins.pluginhub.com.bingosrs.api;
+
+import net.runelite.client.plugins.pluginhub.com.bingosrs.BingOSRSConfig;
+import net.runelite.client.plugins.pluginhub.com.bingosrs.BingOSRSPlugin;
+import net.runelite.client.plugins.pluginhub.com.bingosrs.api.message.AuthResponse;
+import net.runelite.client.plugins.pluginhub.com.bingosrs.api.model.Bingo;
+import net.runelite.client.plugins.pluginhub.com.bingosrs.api.model.Team;
+import net.runelite.client.plugins.pluginhub.com.bingosrs.api.message.AuthRequest;
+import net.runelite.client.plugins.pluginhub.com.bingosrs.api.model.tile.CustomTile;
+import net.runelite.client.plugins.pluginhub.com.bingosrs.api.model.tile.PointTile;
+import net.runelite.client.plugins.pluginhub.com.bingosrs.api.model.tile.StandardTile;
+import net.runelite.client.plugins.pluginhub.com.bingosrs.api.model.tile.Tile;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.reflect.TypeToken;
+import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.events.GameTick;
+import net.runelite.client.util.RuntimeTypeAdapterFactory;
+import okhttp3.*;
+
+import javax.inject.Inject;
+import javax.inject.Singleton;
+import java.io.IOException;
+import java.lang.reflect.Type;
+import java.util.concurrent.CompletableFuture;
+
+@Slf4j
+@Singleton
+public class BingOSRSService {
+    private static final String SCHEME = "https";
+    private static final String HOST = "api.bingosrs.com";
+    private static final int PORT = 443;
+
+    @Inject
+    private OkHttpClient client;
+
+    @Inject
+    private Gson gson;
+
+    @Inject
+    private BingOSRSConfig config;
+
+    @Inject
+    private BingOSRSPlugin plugin;
+
+
+    // Default to true so this pulls on first game tick
+    private boolean shouldFetchAuth = true;
+    private String accessToken;
+
+    public void setAccessToken(String accessToken) {
+        this.accessToken = accessToken;
+        this.plugin.updatePanel();
+    }
+
+    public void startUp() {
+        RuntimeTypeAdapterFactory<Tile> tileAdapter = RuntimeTypeAdapterFactory
+                .of(Tile.class, "__t")
+                .registerSubtype(StandardTile.class, "StandardTile")
+                .registerSubtype(PointTile.class, "PointTile")
+                .registerSubtype(CustomTile.class, "CustomTile");
+
+        this.gson = this.gson.newBuilder()
+                .registerTypeAdapterFactory(tileAdapter)
+                .create();
+
+        triggerAuth(false);
+    }
+
+    private String request(Request request) throws Exception {
+        String json = null;
+        Call call = client.newCall(request);
+        Response response = null;
+
+        try {
+            response = call.execute();
+            if (!response.isSuccessful()) {
+                throw new IOException("Request failed with code: " + response.code() + " message: " + response.message());
+            }
+            ResponseBody body = response.body();
+            if (body != null) {
+                json = body.string();
+            }
+            return json;
+
+        } catch (IOException e) {
+            throw e;
+        }
+        finally {
+            if(response != null) {
+                response.close();
+            }
+        }
+    }
+
+    public void onGameTick(GameTick gameTick) {
+        if (this.shouldFetchAuth) {
+            this.shouldFetchAuth = false;
+            this.fetchAuthTokenAsync();
+        }
+    }
+
+    public void triggerAuth() {
+        triggerAuth(true);
+    }
+
+    public void triggerAuth(boolean lazy) {
+        if (lazy) {
+            this.shouldFetchAuth = true;
+        } else {
+            this.fetchAuthTokenAsync();
+        }
+    }
+
+    private CompletableFuture<Void> fetchAuthTokenAsync() {
+        setAccessToken(null);
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        if (config.bingoId().isBlank() || config.playerToken().isBlank()) {
+            future.complete(null);
+            return future;
+        }
+
+        HttpUrl url = new HttpUrl.Builder().scheme(SCHEME).host(HOST).port(PORT)
+                .addPathSegment("auth").addPathSegment("login").addPathSegment("player").build();
+
+        AuthRequest authRequest = new AuthRequest(config.bingoId(), config.playerToken());
+        String json = gson.toJson(authRequest);
+
+        RequestBody body = RequestBody.create(MediaType.get("application/json"), json);
+        Request request = new Request.Builder().url(url).post(body).build();
+
+        CompletableFuture.supplyAsync(() -> {
+            try {
+                String syncResponseJSON = request(request);
+                AuthResponse authResponse = gson.fromJson(syncResponseJSON, AuthResponse.class);
+                setAccessToken(authResponse.accessToken);
+                log.debug("Successfully authenticated for bingo");
+                future.complete(null);
+            } catch (Exception e) {
+                setAccessToken(null);
+                log.debug("Authentication failed for bingo");
+                future.completeExceptionally(e);
+            }
+            return null;
+        });
+
+        return future;
+    }
+
+    public CompletableFuture<Team[]> fetchTeamsAsync() {
+        CompletableFuture<Team[]> future = new CompletableFuture<>();
+
+        HttpUrl url = new HttpUrl.Builder().scheme(SCHEME).host(HOST).port(PORT)
+                .addPathSegment("bingo").addPathSegment(config.bingoId()).addPathSegment("teams").build();
+
+        Request request = new Request.Builder().url(url).build();
+
+        CompletableFuture.supplyAsync(() -> {
+            try {
+                String syncResponseJSON = request(request);
+
+                Type teamListType = new TypeToken<Team[]>(){}.getType();
+                Team[] teams = gson.fromJson(syncResponseJSON, teamListType);
+
+                future.complete(teams);
+            } catch (Exception e) {
+                log.debug("Error while fetching teams: {}", e.getMessage());
+                future.completeExceptionally(e);
+            }
+            return null; // supplyAsync requires a return value, but it won't be used here
+        });
+
+        return future;
+    }
+
+    public CompletableFuture<Bingo> fetchBingoAsync() {
+        CompletableFuture<Bingo> future = new CompletableFuture<>();
+
+        HttpUrl url = new HttpUrl.Builder().scheme(SCHEME).host(HOST).port(PORT)
+                .addPathSegment("bingo").addPathSegment(config.bingoId()).build();
+
+        Request request = new Request.Builder().url(url).build();
+
+        CompletableFuture.supplyAsync(() -> {
+            try {
+                String syncResponseJSON = request(request);
+
+                Type bingoType = new TypeToken<Bingo>(){}.getType();
+                Bingo bingo = gson.fromJson(syncResponseJSON, bingoType);
+
+                future.complete(bingo);
+            } catch (Exception e) {
+                log.debug("Error while fetching bingo: {}", e.getMessage());
+                future.completeExceptionally(e);
+            }
+            return null; // supplyAsync requires a return value, but it won't be used here
+        });
+
+        return future;
+    }
+
+    public CompletableFuture<String> submitDropAsync(String bingoId, byte[] screenshotBytes, String player, Integer itemId, Integer npcId) {
+        return submitDropAttempt(bingoId, screenshotBytes, player, itemId, npcId, false); // initial attempt
+    }
+
+    private CompletableFuture<String> submitDropAttempt(String bingoId, byte[] screenshotBytes, String player, int itemId, int npcId, boolean isRetry) {
+        CompletableFuture<String> future = new CompletableFuture<>();
+
+        HttpUrl url = new HttpUrl.Builder().scheme(SCHEME).host(HOST).port(PORT)
+                .addPathSegment("bingo").addPathSegment(bingoId).addPathSegment("drop").build();
+
+        RequestBody requestBody = new MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("__t", "Standard")
+                .addFormDataPart("player", player)
+                .addFormDataPart("boss", Integer.toString(npcId))
+                .addFormDataPart("item", Integer.toString(itemId))
+                .addFormDataPart("screenshot", "screenshot.png",
+                        RequestBody.create(MediaType.parse("image/png"), screenshotBytes))
+                .build();
+
+        Request request = new Request.Builder()
+                .url(url)
+                .post(requestBody)
+                .header("Authorization", "Bearer " + accessToken)
+                .build();
+
+        CompletableFuture.supplyAsync(() -> {
+            try {
+                String responseString = request(request);
+                future.complete(responseString);
+            } catch (Exception e) {
+                if (e.getMessage().contains("401") && !isRetry) {
+                    log.debug("Auth error submitting drop to bingo: {}. Reauthenticating...", bingoId);
+                    // If auth error, force re-auth and then retry once
+                    fetchAuthTokenAsync()
+                            .thenRun(() -> {
+                                submitDropAttempt(bingoId, screenshotBytes, player, itemId, npcId, true)
+                                        .whenComplete((result, throwable) -> {
+                                            if (throwable != null) {
+                                                future.completeExceptionally(throwable);
+                                            } else {
+                                                future.complete(result);
+                                            }
+                                        });
+                            })
+                            .exceptionally(throwable -> {
+                                future.completeExceptionally(throwable);
+                                return null;
+                            });
+
+                } else {
+                    log.debug("Error submitting bingo drop: {}", e.getMessage());
+                    future.completeExceptionally(e);
+                }
+            }
+            return null;
+        });
+
+        return future;
+    }
+
+    public boolean isAuthenticated() {
+        return this.accessToken != null;
+    }
+}

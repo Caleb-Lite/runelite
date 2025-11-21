@@ -1,0 +1,320 @@
+package net.runelite.client.plugins.pluginhub.com.hitsounds;
+
+import net.runelite.client.plugins.pluginhub.com.hitsounds.enums.SoundEffectSelectionEnum;
+import net.runelite.client.config.Config;
+import net.runelite.client.config.ConfigGroup;
+import net.runelite.client.config.ConfigItem;
+import net.runelite.client.config.ConfigSection;
+
+@ConfigGroup("hitsounds")
+public interface HitSoundsConfig extends Config
+{
+
+	@ConfigSection(
+			position = 1,
+			name = "Hitsplat Toggles",
+			description = "Toggle hitsplat sounds on and off"
+	)
+	String hitsplatToggleSection = "hitsplatToggleSection";
+
+	@ConfigSection(
+			position = 2,
+			name = "Default Hitsplat Sounds",
+			description = "Select default in-game hitsplat sounds"
+	)
+	String defaultHitsplatSection = "defaultHitsplatSection";
+
+	@ConfigSection(
+			position = 3,
+			name = "Custom Hitsplat Sounds",
+			description = "Select the path to your custom hitsplat sound [.wav], overrides default sounds!"
+	)
+	String customHitsplatSection = "customHitsplatSection";
+
+	@ConfigItem(
+			keyName = "muteOthers",
+			name = "Mute Others",
+			description = "Prevent other players' sounds.",
+			section = "hitsplatToggleSection",
+			position = 1
+	)
+	default boolean muteOthers() {return false;}
+
+	@ConfigItem(
+			keyName = "normalHitBoolean",
+			name = "Normal",
+			description = "Enable/Disable Normal Hit Sounds",
+			section = "hitsplatToggleSection",
+			position = 2
+	)
+	default boolean normalHitBoolean() {return true;}
+
+
+	@ConfigItem(
+			keyName = "maxHitBoolean",
+			name = "Max",
+			description = "Enable/Disable Max Hit Sounds",
+			section = "hitsplatToggleSection",
+			position = 3
+	)
+	default boolean maxHitBoolean() {return true;}
+
+
+	@ConfigItem(
+			keyName = "poisonHitBoolean",
+			name = "Poison",
+			description = "Enable/Disable Poison Hit Sounds",
+			section = "hitsplatToggleSection",
+			position = 4
+	)
+	default boolean poisonHitBoolean() {return true;}
+
+
+	@ConfigItem(
+			keyName = "venomHitBoolean",
+			name = "Venom",
+			description = "Enable/Disable Venom Hit Sounds",
+			section = "hitsplatToggleSection",
+			position = 5
+	)
+	default boolean venomHitBoolean() {return true;}
+
+
+	@ConfigItem(
+			keyName = "diseaseHitBoolean",
+			name = "Disease",
+			description = "Enable/Disable Disease Hit Sounds",
+			section = "hitsplatToggleSection",
+			position = 6
+	)
+	default boolean diseaseHitBoolean() {return true;}
+
+
+	@ConfigItem(
+			keyName = "missHitBoolean",
+			name = "Miss",
+			description = "Enable/Disable Miss Hit Sounds",
+			section = "hitsplatToggleSection",
+			position = 7
+	)
+	default boolean missHitBoolean() {return true;}
+
+
+	@ConfigItem(
+			keyName = "healingHitBoolean",
+			name = "Healing",
+			description = "Enable/Disable Healing Hit Sounds",
+			section = "hitsplatToggleSection",
+			position = 8
+	)
+	default boolean healingHitBoolean() {return true;}
+
+	@ConfigItem(
+			keyName = "shieldHitBoolean",
+			name = "Shield",
+			description = "Enable/Disable Shield Hit Sounds",
+			section = "hitsplatToggleSection",
+			position = 9
+	)
+	default boolean shieldHitBoolean() {return true;}
+
+	@ConfigItem(
+			keyName = "armourHitBoolean",
+			name = "Armour",
+			description = "Enable/Disable Armour Hit Sounds",
+			section = "hitsplatToggleSection",
+			position = 10
+	)
+	default boolean armourHitBoolean() {return true;}
+
+	@ConfigItem(
+			keyName = "chargeHitBoolean",
+			name = "Charge",
+			description = "Enable/Disable Charge Hit Sounds",
+			section = "hitsplatToggleSection",
+			position = 11
+	)
+	default boolean chargeHitBoolean() {return true;}
+
+	@ConfigItem(
+			keyName = "unchargeHitBoolean",
+			name = "Uncharge",
+			description = "Enable/Disable Uncharge Hit Sounds",
+			section = "hitsplatToggleSection",
+			position = 12
+	)
+	default boolean unchargeHitBoolean() {return true;}
+
+	@ConfigItem(
+			keyName = "otherHitBoolean",
+			name = "Other",
+			description = "Enable/Disable Other Hit Sounds",
+			section = "hitsplatToggleSection",
+			position = 9
+	)
+	default boolean otherHitBoolean() {return true;}
+
+	@ConfigItem(
+			keyName = "normalDefaultHitSound",
+			name = "Normal",
+			description = "Set Default Normal Hit Sound",
+			section = "defaultHitsplatSection",
+			position = 1
+	)
+	default SoundEffectSelectionEnum normalHitSound() {return SoundEffectSelectionEnum.TINDER_STRIKE;}
+
+	@ConfigItem(
+			keyName = "maxDefaultHitSound",
+			name = "Max",
+			description = "Set Default Max Hit Sound",
+			section = "defaultHitsplatSection",
+			position = 2
+	)
+	default SoundEffectSelectionEnum maxHitSound() {return SoundEffectSelectionEnum.ROCK_SKIN;}
+
+	@ConfigItem(
+			keyName = "poisonDefaultHitSound",
+			name = "Poison",
+			description = "Set Default Poison Hit Sound",
+			section = "defaultHitsplatSection",
+			position = 3
+	)
+	default SoundEffectSelectionEnum poisonHitSound() {return SoundEffectSelectionEnum.GE_DECREMENT;}
+
+	@ConfigItem(
+			keyName = "venomDefaultHitSound",
+			name = "Venom",
+			description = "Set Default Venom Hit Sound",
+			section = "defaultHitsplatSection",
+			position = 4
+	)
+	default SoundEffectSelectionEnum venomHitSound() {return SoundEffectSelectionEnum.ANVIL_TONK;}
+
+	@ConfigItem(
+			keyName = "diseaseDefaultHitSound",
+			name = "Disease",
+			description = "Set Default Disease Hit Sound",
+			section = "defaultHitsplatSection",
+			position = 5
+	)
+	default SoundEffectSelectionEnum diseaseHitSound() {return SoundEffectSelectionEnum.BELL_DING;}
+
+	@ConfigItem(
+			keyName = "missDefaultHitSound",
+			name = "Miss",
+			description = "Set Default Miss Hit Sound",
+			section = "defaultHitsplatSection",
+			position = 6
+	)
+	default SoundEffectSelectionEnum missHitSound() {return SoundEffectSelectionEnum.PICK_PLANT;}
+
+	@ConfigItem(
+			keyName = "healingDefaultHitSound",
+			name = "Healing",
+			description = "Set Default Healing Hit Sound",
+			section = "defaultHitsplatSection",
+			position = 7
+	)
+	default SoundEffectSelectionEnum healingHitSound() {return SoundEffectSelectionEnum.IMPROVED_REFLEXES;}
+
+	@ConfigItem(
+			keyName = "shieldDefaultHitSound",
+			name = "Shield",
+			description = "Set Default Shield Hit Sound",
+			section = "defaultHitsplatSection",
+			position = 8
+	)
+	default SoundEffectSelectionEnum shieldHitSound() {return SoundEffectSelectionEnum.IMPROVED_REFLEXES;}
+
+	@ConfigItem(
+			keyName = "armourDefaultHitSound",
+			name = "Armour",
+			description = "Set Default Armour Hit Sound",
+			section = "defaultHitsplatSection",
+			position = 9
+	)
+	default SoundEffectSelectionEnum armourHitSound() {return SoundEffectSelectionEnum.IMPROVED_REFLEXES;}
+
+	@ConfigItem(
+			keyName = "chargeDefaultHitSound",
+			name = "Charge",
+			description = "Set Default Charge Hit Sound",
+			section = "defaultHitsplatSection",
+			position = 10
+	)
+	default SoundEffectSelectionEnum chargeHitSound() {return SoundEffectSelectionEnum.IMPROVED_REFLEXES;}
+
+	@ConfigItem(
+			keyName = "unchargeDefaultHitSound",
+			name = "Uncharge",
+			description = "Set Default Uncharge Hit Sound",
+			section = "defaultHitsplatSection",
+			position = 11
+	)
+	default SoundEffectSelectionEnum unchargeHitSound() {return SoundEffectSelectionEnum.IMPROVED_REFLEXES;}
+
+
+	@ConfigItem(
+			keyName = "otherDefaultHitSound",
+			name = "Other",
+			description = "Set Default Other Hit Sound",
+			section = "defaultHitsplatSection",
+			position = 12
+	)
+	default SoundEffectSelectionEnum otherHitSound() {return SoundEffectSelectionEnum.MINING_TINK;}
+
+	@ConfigItem(
+			keyName = "customHitSound",
+			name = "Set Custom Sound",
+			description = "Instructions to set a custom sound",
+			section = "customHitsplatSection",
+			position = 1,
+			warning = "Reset this field if you accidentally remove it."
+	)
+	default String customHitSound() {return "Adding a custom sound\n" +
+			"1a. Navigate to your .runelite folder\n" +
+			"1b. You can right-click the screenshot button in the top right of the runelite client.\n" +
+			"1c. Then open screenshot folder, and navigate to the .runelite directory.\n" +
+			"2. Create a folder called 'hitsounds'.\n" +
+			"3. Add your sound as a {category}.wav file in /.runelite/hitsounds/ .\n" +
+			"\n" +
+			"Acceptable File Names:\n" +
+			"normal.wav\n" +
+			"max.wav\n" +
+			"poison.wav\n" +
+			"venom.wav\n" +
+			"disease.wav\n" +
+			"miss.wav\n" +
+			"healing.wav\n" +
+			"shield.wav\n" +
+			"armour.wav\n" +
+			"charge.wav\n" +
+			"uncharge.wav\n" +
+			"other.wav";}
+}
+
+/*
+ * Copyright (c) 2016-2017, Adam <Adam@sigterm.info>
+ * Copyright (c) 2022, Ferrariic <ferrariictweet@gmail.com>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */

@@ -1,0 +1,198 @@
+package net.runelite.client.plugins.pluginhub.dev.yequi.emotes;
+
+import java.awt.Color;
+import net.runelite.client.config.Alpha;
+import net.runelite.client.config.Config;
+import net.runelite.client.config.ConfigGroup;
+import net.runelite.client.config.ConfigItem;
+
+@ConfigGroup(EmotesConfig.GROUP)
+public interface EmotesConfig extends Config
+{
+	String GROUP = "emotes";
+	String KEY_SAVED = "savedHighlightInfo";
+
+	@Alpha
+	@ConfigItem(
+		position = 1,
+		keyName = "borderColor",
+		name = "Border color",
+		description = "Color of border around the emote"
+	)
+	default Color borderColor()
+	{
+		return Color.ORANGE;
+	}
+
+	@Alpha
+	@ConfigItem(
+		position = 2,
+		keyName = "fillColor",
+		name = "Fill color",
+		description = "Color of fill highlight on emote"
+	)
+	default Color fillColor()
+	{
+		return new Color(0, 255, 0, 20);
+	}
+
+	@ConfigItem(
+		position = 3,
+		keyName = "labelColor",
+		name = "Label color",
+		description = "Color of label on emote"
+	)
+	default Color labelColor()
+	{
+		return Color.WHITE;
+	}
+
+	@ConfigItem(
+		position = 4,
+		keyName = "rememberEmoteColors",
+		name = "Remember color per emote",
+		description = "Uses the colors from time of placement on each emote"
+	)
+	default boolean rememberEmoteColors()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		position = 5,
+		keyName = "displayLabels",
+		name = "Display labels",
+		description = "Shows/hides labels for all emotes"
+	)
+	default boolean displayLabels()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		position = 6,
+		keyName = "scrollToHighlighted",
+		name = "Scroll to first highlight",
+		description = "Scrolls the emotes tab to the first highlighted item whenever the tab is reset",
+		hidden = true
+	)
+	default boolean scrollToHighlighted()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		position = 6,
+		keyName = "scrollToHighlighted",
+		name = "Scroll to first highlight",
+		description = "Scrolls the emotes tab to the first highlighted item whenever the tab is reset",
+		hidden = true
+	)
+	void setScrollToHighlighted(boolean enabled);
+
+	@ConfigItem(
+		position = 6,
+		keyName = "emoteToScrollTo",
+		name = "Emote to scroll to",
+		description = "Scrolls to this emote whenever the tab resets (if scroll mode enabled)"
+	)
+	default Emote emoteToScrollTo()
+	{
+		return Emote.YES;
+	}
+
+	@ConfigItem(
+		position = 6,
+		keyName = "emoteToScrollTo",
+		name = "Emote to scroll to",
+		description = "Scrolls to this emote whenever the tab resets (if scroll mode enabled)",
+		hidden = true
+	)
+	void setEmoteToScrollTo(Emote emote);
+
+	@ConfigItem(
+		position = 7,
+		keyName = "scrollMode",
+		name = "Scroll mode",
+		description = "Where the scrolled-to emote will appear relative to the container"
+	)
+	default ScrollMode scrollMode()
+	{
+		return ScrollMode.DISABLED;
+	}
+
+	@ConfigItem(
+		position = 7,
+		keyName = "scrollMode",
+		name = "Scroll mode",
+		description = "Where the scrolled-to emote will appear relative to the container",
+		hidden = true
+	)
+	void setScrollMode(ScrollMode mode);
+
+	@ConfigItem(
+		keyName = "savedHighlightInfoV2",
+		name = "Highlighted emote info",
+		description = "Map of sprite ids to highlight",
+		hidden = true
+	)
+	default String savedHighlightInfoV2()
+	{
+		return "";
+	}
+
+	@ConfigItem(
+		keyName = "savedHighlightInfoV2",
+		name = "Highlighted emote info",
+		description = "Map of sprite ids to highlight",
+		hidden = true
+	)
+	void setSavedHighlightInfoV2(String serializedInfo);
+
+	// below configs are deprecated and will be eventually removed
+	@ConfigItem(
+		keyName = "savedHighlightInfo",
+		name = "Highlighted emote info",
+		description = "Map of sprite ids to highlight",
+		hidden = true
+	)
+	default String savedHighlightInfo()
+	{
+		return "";
+	}
+
+	@ConfigItem(
+		keyName = "savedHighlightInfo",
+		name = "Highlighted emote info",
+		description = "Map of sprite ids to highlight",
+		hidden = true
+	)
+	void setSavedHighlightInfo(String serializedInfo);
+}
+
+/*
+ * Copyright (c) 2016-2017, Seth <Sethtroll3@gmail.com>
+ * Copyright (c) 2018, Lotto <https://github.com/devLotto>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *   list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *   this list of conditions and the following disclaimer in the documentation
+ *   and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */

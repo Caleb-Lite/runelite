@@ -1,0 +1,93 @@
+package net.runelite.client.plugins.pluginhub.com.ondrad.nekos;
+
+import net.runelite.client.config.Config;
+import net.runelite.client.config.ConfigGroup;
+import net.runelite.client.config.ConfigItem;
+import net.runelite.client.config.Range;
+
+import java.awt.*;
+
+@ConfigGroup("nekoconfig")
+public interface nekoConfig extends Config
+{
+
+	enum ImageType {
+		NEKOS,
+		CATS,
+		KITSUNE
+	}
+	@ConfigItem(
+			position = 1,
+			keyName = "type",
+			name = "Type:",
+			description = "Choose the type of image to display"
+	)
+	default ImageType type() {
+		return ImageType.NEKOS;
+	}
+
+
+	@ConfigItem(
+		position = 2,
+		keyName = "delaySeconds",
+		name = "Delay in seconds",
+		description = "The delay between images in seconds"
+	)
+	@Range(min = 1)
+	default int delaySeconds()
+	{
+		return 10;
+	}
+
+	@ConfigItem(
+		position = 3,
+		keyName = "everyTick",
+		name = "Update every game tick",
+		description = "If enabled, the image will update every RuneScape game tick (0.6s), ignoring the delay setting."
+	)
+	default boolean everyTick() {
+		return false;
+	}
+
+	@ConfigItem(
+		position = 4,
+		keyName = "opacity",
+		name = "Opacity",
+		description = "Opacity of the image in %"
+	)
+	default int opacity()
+	{
+		return 100;
+	}
+
+	@ConfigItem(
+		position = 5,
+		keyName = "Dimensions",
+		name = "Dimensions",
+		description = "Width and height of the image"
+	)
+	default Dimension dimension()
+	{
+		return new Dimension(200, 300);
+	}
+
+	@ConfigItem(
+		position = 6,
+		keyName = "xpos",
+		name = "X Position",
+		description = "X position of the image"
+	)
+	default int xpos() { return 9; }
+
+	@ConfigItem(
+		position = 7,
+		keyName = "ypos",
+		name = "Y position",
+		description = "Y position of the image"
+	)
+	default int ypos()
+	{
+		return 147;
+	}
+
+}

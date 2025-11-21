@@ -1,0 +1,31 @@
+package net.runelite.client.plugins.pluginhub.tictac7x.charges.items.shields;
+
+import net.runelite.client.plugins.pluginhub.tictac7x.charges.store.enums.HitsplatGroup;
+import net.runelite.client.plugins.pluginhub.tictac7x.charges.store.ids.ItemId;
+import net.runelite.client.plugins.pluginhub.tictac7x.charges.TicTac7xChargesImprovedConfig;
+import net.runelite.client.plugins.pluginhub.tictac7x.charges.item.ChargedItem;
+import net.runelite.client.plugins.pluginhub.tictac7x.charges.item.triggers.OnChatMessage;
+import net.runelite.client.plugins.pluginhub.tictac7x.charges.item.triggers.OnHitsplatApplied;
+import net.runelite.client.plugins.pluginhub.tictac7x.charges.item.triggers.TriggerBase;
+import net.runelite.client.plugins.pluginhub.tictac7x.charges.item.triggers.TriggerItem;
+import net.runelite.client.plugins.pluginhub.tictac7x.charges.store.enums.HitsplatTarget;
+import net.runelite.client.plugins.pluginhub.tictac7x.charges.store.Provider;
+
+public class S_CrystalShield extends ChargedItem {
+    public S_CrystalShield(final Provider provider) {
+        super(TicTac7xChargesImprovedConfig.crystal_shield, ItemId.CRYSTAL_SHIELD_DEGRADED, provider);
+
+        this.items = new TriggerItem[]{
+            new TriggerItem(ItemId.CRYSTAL_SHIELD),
+            new TriggerItem(ItemId.CRYSTAL_SHIELD_DEGRADED),
+        };
+
+        this.triggers = new TriggerBase[] {
+            // Check.
+            new OnChatMessage("Your crystal shield has (?<charges>.+) charges? remaining.").setDynamicallyCharges(),
+
+            // Get hit.
+            new OnHitsplatApplied(HitsplatTarget.SELF, HitsplatGroup.SUCCESSFUL).moreThanZeroDamage().isEquipped().decreaseCharges(1)
+        };
+    }
+}

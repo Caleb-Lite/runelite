@@ -1,0 +1,66 @@
+package net.runelite.client.plugins.pluginhub.com.lootfilters.model;
+
+import net.runelite.client.plugins.pluginhub.com.lootfilters.LootFiltersPlugin;
+import lombok.RequiredArgsConstructor;
+
+import java.awt.image.BufferedImage;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
+
+@RequiredArgsConstructor
+public class IconIndex {
+    private final LootFiltersPlugin plugin;
+    private final Map<BufferedImageProvider.CacheKey, CacheEntry> index = new HashMap<>();
+
+    public BufferedImage get(BufferedImageProvider.CacheKey key) {
+        return index.containsKey(key) ? index.get(key).image : null;
+    }
+
+    public void inc(BufferedImageProvider provider, PluginTileItem item, int... height) {
+        index.compute(provider.getCacheKey(item, height), (k, entry) -> {
+            if (entry == null) {
+                return new CacheEntry(provider.getImage(plugin, item, height));
+            }
+
+            ++entry.refCount;
+            return entry;
+        });
+    }
+
+    public void dec(BufferedImageProvider provider, PluginTileItem item, int... height) {
+        index.compute(provider.getCacheKey(item, height), (k, entry) -> {
+            if (entry == null) {
+                return null;
+            }
+            --entry.refCount;
+            return entry.refCount == 0 ? null : entry;
+        });
+    }
+
+    public int size() {
+        return index.size();
+    }
+
+    public void clear() {
+        index.clear();
+    }
+
+    public void reset() {
+        clear();
+        for (var entry : plugin.getTileItemIndex().entrySet()) {
+            for (var item : entry.getValue()) {
+                var match = plugin.getActiveFilter().findMatch(plugin, item);
+                if (match != null && match.getIcon() != null) {
+                    inc(match.getIcon(), item, match.isCompact() ? plugin.getConfig().compactRenderSize() : 16);
+                }
+            }
+        }
+    }
+
+    @RequiredArgsConstructor
+    private static final class CacheEntry {
+        final BufferedImage image;
+        int refCount = 1;
+    }
+}

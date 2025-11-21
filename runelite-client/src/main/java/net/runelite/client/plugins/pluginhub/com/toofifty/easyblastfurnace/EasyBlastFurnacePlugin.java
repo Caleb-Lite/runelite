@@ -1,0 +1,317 @@
+package net.runelite.client.plugins.pluginhub.com.toofifty.easyblastfurnace;
+
+import com.google.inject.Inject;
+import com.google.inject.Provides;
+import com.toofifty.easyblastfurnace.overlays.*;
+import net.runelite.client.plugins.pluginhub.com.toofifty.easyblastfurnace.state.BlastFurnaceState;
+import net.runelite.client.plugins.pluginhub.com.toofifty.easyblastfurnace.utils.MethodHandler;
+import net.runelite.client.plugins.pluginhub.com.toofifty.easyblastfurnace.utils.ObjectManager;
+import net.runelite.client.plugins.pluginhub.com.toofifty.easyblastfurnace.utils.SessionStatistics;
+import net.runelite.client.plugins.pluginhub.com.toofifty.easyblastfurnace.utils.Strings;
+import lombok.Getter;
+import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.ChatMessageType;
+import net.runelite.api.Client;
+import net.runelite.api.GameObject;
+import net.runelite.api.GameState;
+import net.runelite.api.gameval.InterfaceID;
+import net.runelite.api.gameval.ItemID;
+import net.runelite.api.gameval.InventoryID;
+import net.runelite.api.gameval.ObjectID;
+import net.runelite.api.coords.WorldPoint;
+import net.runelite.api.events.*;
+import net.runelite.api.widgets.Widget;
+import net.runelite.client.callback.ClientThread;
+import net.runelite.client.config.ConfigManager;
+import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.events.ConfigChanged;
+import net.runelite.client.events.OverlayMenuClicked;
+import net.runelite.client.plugins.Plugin;
+import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.ui.overlay.OverlayManager;
+
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Objects;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+@Slf4j
+@PluginDescriptor(
+    name = "Easy Blast Furnace",
+    description = "Helps you train at the blast furnace more efficiently"
+)
+public class EasyBlastFurnacePlugin extends Plugin
+{
+	public static final int CONVEYOR_BELT = ObjectID.BLAST_FURNACE_CONVEYER_BELT_CLICKABLE;
+	public static final int BAR_DISPENSER = ObjectID.BLAST_FURNACE_DISPENSER;
+	public static final int BANK_CHEST = ObjectID.BLAST_BANK_CHEST;
+
+
+    public static final WorldPoint PICKUP_POSITION = new WorldPoint(1940, 4962, 0);
+
+    private static final Pattern COAL_FULL_MESSAGE = Pattern.compile(Strings.COAL_FULL);
+    private static final Pattern COAL_EMPTY_MESSAGE = Pattern.compile(Strings.COAL_EMPTY);
+
+    @Inject
+    private Client client;
+
+    @Inject
+    private ClientThread clientThread;
+
+    @Inject
+    private OverlayManager overlayManager;
+
+    @Inject
+    private EasyBlastFurnaceConfig config;
+
+    @Inject
+    private BlastFurnaceState state;
+
+    @Inject
+    private ObjectManager objectManager;
+
+    @Inject
+    private InstructionOverlay instructionOverlay;
+
+    @Inject
+    private StatisticsOverlay statisticsOverlay;
+
+    @Inject
+    private ItemStepOverlay itemStepOverlay;
+
+    @Inject
+    private BankItemStepOverlay bankItemStepOverlay;
+
+    @Inject
+    private WidgetStepOverlay widgetStepOverlay;
+
+    @Inject
+    private ObjectStepOverlay objectStepOverlay;
+
+    @Inject
+    private TileStepOverlay tileStepOverlay;
+
+    @Inject
+    private CoalBagOverlay coalBagOverlay;
+
+    @Inject
+    private MethodHandler methodHandler;
+
+    @Inject
+    private SessionStatistics statistics;
+
+    @Getter
+    private boolean isEnabled = false;
+
+    @Getter
+    private int lastCheckTick = 0;
+    private int oreOntoConveyorCount = 0;
+	private boolean cachePotions = true;
+	private Set<Integer> potionStoreVars;
+
+    @Override
+    protected void startUp()
+    {
+        overlayManager.add(instructionOverlay);
+        overlayManager.add(statisticsOverlay);
+        overlayManager.add(coalBagOverlay);
+        overlayManager.add(itemStepOverlay);
+        overlayManager.add(bankItemStepOverlay);
+        overlayManager.add(widgetStepOverlay);
+        overlayManager.add(objectStepOverlay);
+        overlayManager.add(tileStepOverlay);
+    }
+
+    @Override
+    protected void shutDown()
+    {
+        statistics.clear();
+        methodHandler.clear();
+
+        overlayManager.remove(instructionOverlay);
+        overlayManager.remove(statisticsOverlay);
+        overlayManager.remove(coalBagOverlay);
+        overlayManager.remove(itemStepOverlay);
+        overlayManager.remove(bankItemStepOverlay);
+        overlayManager.remove(widgetStepOverlay);
+        overlayManager.remove(objectStepOverlay);
+        overlayManager.remove(tileStepOverlay);
+    }
+
+    @Subscribe
+    public void onGameObjectSpawned(GameObjectSpawned event)
+    {
+        GameObject gameObject = event.getGameObject();
+
+        switch (gameObject.getId()) {
+            case BANK_CHEST:
+                objectManager.add(gameObject);
+                break;
+            case CONVEYOR_BELT:
+            case BAR_DISPENSER:
+                objectManager.add(gameObject);
+                isEnabled = true;
+        }
+    }
+
+    @Subscribe
+    public void onGameObjectDespawned(GameObjectDespawned event)
+    {
+        GameObject gameObject = event.getGameObject();
+
+        switch (gameObject.getId()) {
+            case CONVEYOR_BELT:
+            case BAR_DISPENSER:
+                if (config.clearMethodOnExit()) methodHandler.clear();
+                if (config.clearStatisticsOnExit()) statistics.clear();
+                isEnabled = false;
+        }
+    }
+
+    @Subscribe
+    public void onGameStateChanged(GameStateChanged event)
+    {
+        if (event.getGameState() != GameState.LOGGED_IN) {
+            if (config.clearMethodOnLogout()) methodHandler.clear();
+            if (config.clearStatisticsOnLogout()) statistics.clear();
+            isEnabled = false;
+        }
+    }
+
+    @Subscribe
+    public void onItemContainerChanged(ItemContainerChanged event)
+    {
+        if (!isEnabled) return;
+
+        if (event.getContainerId() == InventoryID.INV) {
+            methodHandler.setMethodFromInventory();
+            state.update();
+        }
+
+        // handle any inventory or bank changes
+        methodHandler.next();
+    }
+
+    @Subscribe
+    public void onVarbitChanged(VarbitChanged varbitChanged)
+    {
+        if (!isEnabled) return;
+
+		if (potionStoreVars != null && potionStoreVars.contains(varbitChanged.getVarpId()))
+		{
+			cachePotions = true;
+		}
+
+        statistics.onFurnaceUpdate();
+        state.update();
+
+        // handle furnace ore/bar quantity changes
+        methodHandler.next();
+    }
+
+    @Subscribe
+    public void onConfigChanged(ConfigChanged event) {
+        if (Objects.equals(event.getGroup(), "easy-blastfurnace") && Objects.equals(event.getKey(), "potionMode")) {
+            clientThread.invokeLater(() -> methodHandler.next());
+        }
+    }
+
+    @Subscribe
+    public void onChatMessage(ChatMessage event)
+    {
+        if (!isEnabled) return;
+        if (event.getType() != ChatMessageType.GAMEMESSAGE && event.getType() != ChatMessageType.SPAM) return;
+
+        String message = event.getMessage();
+        int maxConveyorCount = state.getCoalBag().getMaxCoal() == 27 ? 2 : 3;
+        Matcher emptyMatcher = COAL_EMPTY_MESSAGE.matcher(message);
+        Matcher filledMatcher = COAL_FULL_MESSAGE.matcher(message);
+
+        if (emptyMatcher.matches()) {
+            state.getCoalBag().empty();
+        }
+
+        if (filledMatcher.matches()) {
+            int addedCoal = Integer.parseInt(filledMatcher.group(1));
+            state.getCoalBag().setCoal(state.getCoalBag().getCoal() + addedCoal);
+        }
+
+        if (message.equals("All your ore goes onto the conveyor belt.")) {
+            if (state.getInventory().has(ItemID.COAL)) {
+                oreOntoConveyorCount++;
+            } else {
+                oreOntoConveyorCount = 1;
+            }
+        }
+
+        // After emptying coal bag onto conveyor, ensure coal amount is 0.
+        if (maxConveyorCount == oreOntoConveyorCount) {
+            oreOntoConveyorCount = 0;
+            if (state.getCoalBag().getCoal() > 1) state.getCoalBag().setCoal(0);
+        }
+
+        // handle coal bag changes
+        methodHandler.next();
+    }
+
+    @Subscribe
+    public void onMenuOptionClicked(MenuOptionClicked event)
+    {
+        if (!isEnabled) return;
+
+        if (event.getMenuOption().equals(Strings.DRINK)) statistics.drinkStamina();
+
+        // Because menu option events can happen multiple times per tick, this is needed to prevent duplicate coal bag empty events.
+        final int currentTick = client.getTickCount();
+        if (lastCheckTick == currentTick)
+        {
+            return;
+        }
+        lastCheckTick = currentTick;
+
+        if (event.getMenuOption().equals(Strings.EMPTY)) state.getCoalBag().empty();
+
+        // handle coal bag changes
+        methodHandler.next();
+    }
+
+    @Subscribe
+    public void onOverlayMenuClicked(OverlayMenuClicked event)
+    {
+        if (event.getOverlay() == instructionOverlay &&
+            event.getEntry().getOption().equals(InstructionOverlay.RESET_ACTION)) {
+            methodHandler.clear();
+        }
+        if (event.getOverlay() == statisticsOverlay &&
+            event.getEntry().getOption().equals(StatisticsOverlay.CLEAR_ACTION)) {
+            statistics.clear();
+        }
+    }
+
+	@Subscribe
+	public void onClientTick(ClientTick event)
+	{
+		if (state.getBank().isOpen() && cachePotions)
+		{
+			cachePotions = false;
+			state.getBank().updatePotionStorage();
+
+			Widget potionStoreItems = client.getWidget(InterfaceID.Bankmain.POTIONSTORE_ITEMS);
+			if (potionStoreItems != null && potionStoreVars == null)
+			{
+				// cache varps to update potions when one is updated
+				int[] trigger = potionStoreItems.getVarTransmitTrigger();
+				potionStoreVars = new HashSet<>();
+				Arrays.stream(trigger).forEach(potionStoreVars::add);
+			}
+		}
+	}
+
+    @Provides
+    EasyBlastFurnaceConfig provideConfig(ConfigManager configManager)
+    {
+        return configManager.getConfig(EasyBlastFurnaceConfig.class);
+    }
+}

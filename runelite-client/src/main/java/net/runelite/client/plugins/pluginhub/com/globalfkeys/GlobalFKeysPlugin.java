@@ -1,0 +1,212 @@
+package net.runelite.client.plugins.pluginhub.com.globalfkeys;
+
+import com.google.common.collect.ImmutableSet;
+import com.google.inject.Provides;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Set;
+import javax.inject.Inject;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.Client;
+import net.runelite.api.VarClientInt;
+import net.runelite.api.WidgetNode;
+import net.runelite.api.events.GameTick;
+import net.runelite.api.events.VarbitChanged;
+import net.runelite.api.widgets.Widget;
+import net.runelite.api.widgets.WidgetInfo;
+import net.runelite.api.widgets.WidgetModalMode;
+import net.runelite.client.config.ConfigManager;
+import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.events.ConfigChanged;
+import net.runelite.client.input.KeyManager;
+import net.runelite.client.plugins.Plugin;
+import net.runelite.client.plugins.PluginDescriptor;
+
+@Slf4j
+@PluginDescriptor(
+	name = "Global F Keys"
+)
+public class GlobalFKeysPlugin extends Plugin
+{
+	// Following varbits get the F-Key the player has set in settings; value is numeric
+	// such that a value of 12 means that tab is bound to F12
+	static final int COMBAT_TAB_BINDING = 4675;
+	static final int SKILLS_TAB_BINDING = 4676;
+	static final int QUESTS_TAB_BINDING = 4677;
+	static final int INVENTORY_TAB_BINDING = 4678;
+	static final int EQUIPMENT_TAB_BINDING = 4679;
+	static final int PRAYER_TAB_BINDING = 4680;
+	static final int MAGIC_TAB_BINDING = 4682;
+	static final int FRIENDS_TAB_BINDING = 4684;
+	static final int ACCOUNT_MANAGEMENT_TAB_BINDING = 6517;
+	static final int LOGOUT_BINDING = 4689;
+	static final int SETTINGS_TAB_BINDING = 4686;
+	static final int EMOTE_TAB_BINDING = 4687;
+	static final int CHAT_CHANNEL_TAB_BINDING = 4683;
+	static final int MUSIC_PLAYER_TAB_BINDING = 4688;
+
+	private static final Set<Integer> VARBITS = ImmutableSet.of(
+		COMBAT_TAB_BINDING, SKILLS_TAB_BINDING, QUESTS_TAB_BINDING,
+		INVENTORY_TAB_BINDING, EQUIPMENT_TAB_BINDING, PRAYER_TAB_BINDING,
+		MAGIC_TAB_BINDING, FRIENDS_TAB_BINDING, ACCOUNT_MANAGEMENT_TAB_BINDING,
+		LOGOUT_BINDING, SETTINGS_TAB_BINDING, EMOTE_TAB_BINDING,
+		CHAT_CHANNEL_TAB_BINDING, MUSIC_PLAYER_TAB_BINDING
+	);
+
+	@Inject
+	private Client client;
+
+	@Inject
+	private GlobalFKeysConfig config;
+
+	@Inject
+	private KeyManager keyManager;
+
+	@Inject
+	private GlobalFKeysKeyListener inputListener;
+
+	@Inject
+	private ConfigManager configManager;
+
+	@Getter(AccessLevel.PACKAGE)
+	private boolean shouldNotRemapEscape;
+
+	@Getter(AccessLevel.PACKAGE)
+	private final Map<Integer, FKey> fkeyVarbitToKey = new HashMap<>();
+
+	@Override
+	protected void startUp() throws Exception
+	{
+		keyManager.registerKeyListener(inputListener);
+		configManager.getConfigurationKeys(GlobalFKeysConfig.CONFIG_GROUP_NAME)
+			.forEach(key ->
+			{
+				// New config values end in -Key, unset old ones for people
+				if (!key.endsWith("Key"))
+				{
+					final String rawKey = key.split("\\.", 2)[1];
+					configManager.unsetConfiguration(GlobalFKeysConfig.CONFIG_GROUP_NAME, rawKey);
+				}
+			});
+	}
+
+	@Override
+	protected void shutDown() throws Exception
+	{
+		keyManager.unregisterKeyListener(inputListener);
+	}
+
+	@Subscribe
+	public void onVarbitChanged(VarbitChanged varbitChanged)
+	{
+		VARBITS.forEach(varbit ->
+		{
+			final int varbitVal = client.getVarbitValue(varbit);
+			final FKey existingValue = fkeyVarbitToKey.get(varbit);
+			final FKey newValue = FKey.VARBIT_TO_FKEY.get(varbitVal);
+			if (existingValue == null || existingValue != newValue)
+			{
+				fkeyVarbitToKey.put(varbit, newValue);
+				log.debug("Storing FKey value {} for varbit {}", varbitVal, varbit);
+			}
+		});
+	}
+
+	@Subscribe
+	private void onConfigChanged(ConfigChanged configChanged)
+	{
+		// If a user sets a keybinding, we need to check every other config
+		// and set them to None if they are the same key
+		// TODO: Revisit if panel refresh ever gets supported
+		if (configChanged.getGroup().equals(GlobalFKeysConfig.CONFIG_GROUP_NAME))
+		{
+			log.debug("Checking for mutual exclusivity on config changed: {}", configChanged);
+			final String fkeyValue = configChanged.getNewValue();
+			for (String key : configManager.getConfigurationKeys(GlobalFKeysConfig.CONFIG_GROUP_NAME))
+			{
+				final String rawKey = key.split("\\.", 2)[1];
+				if (rawKey.equals(configChanged.getKey()))
+				{
+					continue;
+				}
+
+				final String configValue = configManager.getConfiguration(GlobalFKeysConfig.CONFIG_GROUP_NAME, rawKey);
+				if (fkeyValue.equals(configValue))
+				{
+					// Set value back to None
+					configManager.setConfiguration(GlobalFKeysConfig.CONFIG_GROUP_NAME, rawKey, FKey.NONE);
+					log.debug("Setting config for {} to NONE", rawKey);
+				}
+			}
+		}
+	}
+
+	@Subscribe
+	private void onGameTick(GameTick gameTick)
+	{
+		boolean modalOpen = false;
+		for (WidgetNode node : client.getComponentTable())
+		{
+			if (node.getModalMode() != WidgetModalMode.NON_MODAL)
+			{
+				modalOpen = true;
+			}
+		}
+		shouldNotRemapEscape = modalOpen;
+	}
+
+	@Provides
+	GlobalFKeysConfig provideConfig(ConfigManager configManager)
+	{
+		return configManager.getConfig(GlobalFKeysConfig.class);
+	}
+
+	/**
+	 * Check if a dialog is open that will grab numerical input, to prevent F-key remapping
+	 * from triggering.
+	 *
+	 * @return
+	 */
+	boolean isDialogOpen()
+	{
+		// Most chat dialogs with numerical input are added without the chatbox or its key listener being removed,
+		// so chatboxFocused() is true. The chatbox onkey script uses the following logic to ignore key presses,
+		// so we will use it too to not remap F-keys.
+		return isHidden(WidgetInfo.CHATBOX_MESSAGES) || isHidden(WidgetInfo.CHATBOX_TRANSPARENT_LINES)
+			// We want to block F-key remapping in the bank pin interface too, so it does not interfere with the
+			// Keyboard Bankpin feature of the Bank plugin
+			|| !isHidden(WidgetInfo.BANK_PIN_CONTAINER);
+	}
+
+	boolean isOptionsDialogOpen()
+	{
+		return client.getWidget(WidgetInfo.DIALOG_OPTION) != null;
+	}
+
+	private boolean isHidden(WidgetInfo widgetInfo)
+	{
+		Widget w = client.getWidget(widgetInfo);
+		return w == null || w.isSelfHidden();
+	}
+
+	boolean chatboxFocused()
+	{
+		Widget chatboxParent = client.getWidget(WidgetInfo.CHATBOX_PARENT);
+		if (chatboxParent == null || chatboxParent.getOnKeyListener() == null)
+		{
+			return false;
+		}
+
+		// the search box on the world map can be focused, and chat input goes there, even
+		// though the chatbox still has its key listener.
+		Widget worldMapSearch = client.getWidget(WidgetInfo.WORLD_MAP_SEARCH);
+		return worldMapSearch == null || client.getVarcIntValue(VarClientInt.WORLD_MAP_SEARCH_FOCUSED) != 1;
+	}
+
+	boolean isWorldMapOpen()
+	{
+		return !isHidden(WidgetInfo.WORLD_MAP_VIEW) || !isHidden(WidgetInfo.WORLD_MAP_OVERVIEW_MAP);
+	}
+}

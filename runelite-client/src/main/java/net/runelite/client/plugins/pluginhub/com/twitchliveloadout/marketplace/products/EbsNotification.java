@@ -1,0 +1,10 @@
+package net.runelite.client.plugins.pluginhub.com.twitchliveloadout.marketplace.products;
+
+import static com.twitchliveloadout.marketplace.MarketplaceConstants.*;
+
+public class EbsNotification {
+	public String messageType = NONE_NOTIFICATION_MESSAGE_TYPE;
+	public String message;
+	public Boolean queue = true;
+	public String popupTitle = null;
+}

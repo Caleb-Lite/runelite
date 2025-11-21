@@ -1,0 +1,83 @@
+package net.runelite.client.plugins.pluginhub.com.dryrate;
+
+import net.runelite.client.config.Config;
+import net.runelite.client.config.ConfigGroup;
+import net.runelite.client.config.ConfigItem;
+
+@ConfigGroup("dryrate")
+public interface DryRateConfig extends Config
+{
+	@ConfigItem(
+		keyName = "showNotifications",
+		name = "Show notifications",
+		description = "Show notifications when you go dry or get a unique"
+	)
+	default boolean showNotifications()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "trackToB",
+		name = "Track Theatre of Blood",
+		description = "Track dry streaks for Theatre of Blood"
+	)
+	default boolean trackToB()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "trackToA",
+		name = "Track Tombs of Amascut",
+		description = "Track dry streaks for Tombs of Amascut"
+	)
+	default boolean trackToA()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "trackCoX",
+		name = "Track Chambers of Xeric",
+		description = "Track dry streaks for Chambers of Xeric"
+	)
+	default boolean trackCoX()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "resetConfirmation",
+		name = "Confirm resets",
+		description = "Ask for confirmation before resetting dry streak counters"
+	)
+	default boolean resetConfirmation()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+		keyName = "teamDropResets",
+		name = "Team drops reset streaks",
+		description = "Reset your dry streak when anyone in your team gets a unique (not just you)",
+		position = 4
+	)
+	default boolean teamDropResets()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "showTestButtons",
+		name = "Show test buttons",
+		description = "Show test buttons for development/testing (Test Completion, Test Unique, etc.)",
+		position = 5
+	)
+	default boolean showTestButtons()
+	{
+		return false;
+	}
+
+
+} 

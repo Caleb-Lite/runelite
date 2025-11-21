@@ -1,0 +1,401 @@
+package net.runelite.client.plugins.pluginhub.com.maniacalhunter;
+
+import com.google.inject.Provides;
+import java.awt.image.BufferedImage;
+import java.time.Duration;
+import java.time.Instant;
+import javax.inject.Inject;
+
+import lombok.Getter;
+import lombok.Setter;
+import net.runelite.api.Client;
+import net.runelite.api.GameObject;
+import net.runelite.api.InventoryID;
+import net.runelite.api.GameState;
+import net.runelite.api.Skill;
+import net.runelite.api.events.PlayerDespawned;
+import net.runelite.api.events.PlayerSpawned;
+import net.runelite.api.events.GameObjectSpawned;
+import net.runelite.api.events.GameStateChanged;
+import net.runelite.api.events.GameTick;
+import net.runelite.api.events.ItemContainerChanged;
+import net.runelite.api.events.StatChanged;
+import net.runelite.client.config.ConfigManager;
+import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.plugins.Plugin;
+import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.ui.overlay.OverlayManager;
+import net.runelite.client.events.ConfigChanged;
+import net.runelite.client.Notifier;
+import net.runelite.client.game.ItemManager;
+import net.runelite.client.ui.overlay.infobox.InfoBoxManager;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+@PluginDescriptor(
+	name = "Maniacal Hunter"
+)
+public class ManiacalHunterPlugin extends Plugin
+{
+	private static final Logger log = LoggerFactory.getLogger(ManiacalHunterPlugin.class);
+	private static final String CONFIG_GROUP = "maniacalhunter";
+	private static final String RESET_BUTTON_KEY = "resetSessionButton";
+	private static final String CONDENSED_MODE_KEY = "condensedMode";
+
+	@Getter
+    private BufferedImage icon;
+
+	@Inject
+	private Client client;
+
+	@Setter
+    @Getter
+    @Inject
+	private Notifier notifier;
+
+	@Inject
+	private ManiacalHunterConfig config;
+
+	@Inject
+	private ConfigManager configManager;
+
+    @Inject
+    private ItemManager itemManager;
+
+	@Inject
+	private InfoBoxManager infoBoxManager;
+
+	@Getter
+	@Inject
+	private ManiacalHunterSession session;
+
+	@Getter
+    private ManiacalHunterSession aggregateSession = new ManiacalHunterSession();
+
+	@Inject
+	private OverlayManager overlayManager;
+
+	@Inject
+	private ManiacalHunterOverlay overlay;
+
+	private ManiacalHunterInfoBox infoBox;
+
+	private int lastPerfectTails = 0;
+	private int lastDamagedTails = 0;
+	private int catchesThisTick = 0;
+	private int lastTick = 0;
+	private int lastHunterXp = -1;
+	private boolean inHunterArea = false;
+
+	private void reset()
+	{
+		session.reset();
+		catchesThisTick = 0;
+		lastTick = 0;
+        lastPerfectTails = 0;
+        lastDamagedTails = 0;
+
+		if (client.getGameState() == GameState.LOGGED_IN)
+		{
+			lastHunterXp = client.getSkillExperience(Skill.HUNTER);
+		}
+		else
+		{
+			lastHunterXp = -1;
+		}
+	}
+
+	@Override
+	protected void startUp() throws Exception
+	{
+		log.info("Maniacal Hunter started!");
+		loadSession();
+		icon = itemManager.getImage(ManiacalHunterConstants.MANIACAL_ITEM_ID);
+		infoBox = new ManiacalHunterInfoBox(this, config, icon);
+		updateDisplayMode();
+	}
+
+	@Override
+	protected void shutDown() throws Exception
+	{
+		log.info("Maniacal Hunter stopped!");
+		infoBoxManager.removeInfoBox(infoBox);
+		overlayManager.remove(overlay);
+	}
+
+	private void loadSession()
+	{
+		aggregateSession.setSessionStartTimeMillis(config.getSessionStartTime());
+		aggregateSession.setDurationMillis(config.getDuration());
+		aggregateSession.setMonkeysCaught(config.getMonkeysCaught());
+		aggregateSession.setTrapsLaid(config.getTrapsLaid());
+		aggregateSession.setLastTrapStatus(config.getLastTrapStatus());
+		aggregateSession.setPerfectTails(config.getPerfectTails());
+		aggregateSession.setDamagedTails(config.getDamagedTails());
+		aggregateSession.setDamagedTailsSincePerfect(config.getDamagedTailsSincePerfect());
+	}
+
+	@Subscribe
+	public void onGameStateChanged(GameStateChanged gameStateChanged)
+	{
+		if (gameStateChanged.getGameState() == GameState.LOGGED_IN)
+		{
+			lastHunterXp = client.getSkillExperience(Skill.HUNTER);
+		}
+	}
+
+	@Subscribe
+	public void onItemContainerChanged(ItemContainerChanged event)
+	{
+		if (!isInManiacalHunterArea() || event.getContainerId() != InventoryID.INVENTORY.getId())
+		{
+			return;
+		}
+
+		int currentPerfectTails = event.getItemContainer().count(ManiacalHunterConstants.PERFECT_MONKEY_TAIL);
+		int currentDamagedTails = event.getItemContainer().count(ManiacalHunterConstants.DAMAGED_MONKEY_TAIL);
+
+		int perfectTailsGained = currentPerfectTails - lastPerfectTails;
+		int damagedTailsGained = currentDamagedTails - lastDamagedTails;
+
+		if (catchesThisTick > 0 && (perfectTailsGained > 0 || damagedTailsGained > 0))
+		{
+			if (perfectTailsGained > 0)
+			{
+				handlePerfectTailGain();
+			}
+			if (damagedTailsGained > 0)
+			{
+				handleDamagedTailGain();
+			}
+			handleMonkeyCatch();
+			catchesThisTick--;
+		}
+
+		lastPerfectTails = currentPerfectTails;
+		lastDamagedTails = currentDamagedTails;
+	}
+
+	@Subscribe
+	public void onGameTick(GameTick tick)
+	{
+  
+        if (!isInManiacalHunterArea())
+		{
+			return;
+		}
+		if (client.getTickCount() != lastTick)
+		{
+			catchesThisTick = 0;
+			lastTick = client.getTickCount();
+        }
+		if (session.getSessionStartTime() != null)
+		{
+			session.setDuration(Duration.between(session.getSessionStartTime(), Instant.now()));
+		}
+		if (aggregateSession.getSessionStartTime() != null)
+		{
+			aggregateSession.setDuration(Duration.between(aggregateSession.getSessionStartTime(), Instant.now()));
+			config.setDuration(aggregateSession.getDurationMillis());
+		}
+	}
+
+	@Subscribe
+	public void onPlayerSpawned(PlayerSpawned event)
+	{
+		if (event.getPlayer() != client.getLocalPlayer())
+		{
+			return;
+		}
+
+		boolean currentlyInArea = isInManiacalHunterArea();
+		if (currentlyInArea)
+		{
+			inHunterArea = true;
+			if (config.autoResetMode() == ResetMode.ON_ENTER_AREA)
+			{
+				reset();
+			}
+		}
+	}
+
+	@Subscribe
+	public void onPlayerDespawned(PlayerDespawned event)
+	{
+		if (event.getPlayer() != client.getLocalPlayer())
+		{
+			return;
+		}
+
+		if (inHunterArea)
+		{
+			if (config.autoResetMode() == ResetMode.ON_LEAVE_AREA)
+			{
+				reset();
+			}
+			inHunterArea = false;
+		}
+	}
+
+	private boolean isInManiacalHunterArea()
+	{
+		return client.getLocalPlayer() != null && client.getLocalPlayer().getWorldLocation().getRegionID() == ManiacalHunterConstants.MANIACAL_HUNTER_REGION;
+	}
+
+	@Subscribe
+	public void onStatChanged(StatChanged statChanged)
+	{
+		if (statChanged.getSkill() != Skill.HUNTER || !isInManiacalHunterArea())
+		{
+			return;
+		}
+
+		if (lastHunterXp == -1)
+		{
+			lastHunterXp = statChanged.getXp();
+			return;
+		}
+
+		int currentXp = statChanged.getXp();
+		int gainedXp = currentXp - lastHunterXp;
+
+		if (gainedXp > 0 && gainedXp % ManiacalHunterConstants.MANIACAL_MONKEY_XP == 0)
+		{
+			catchesThisTick += gainedXp / ManiacalHunterConstants.MANIACAL_MONKEY_XP;
+		}
+		
+		lastHunterXp = currentXp;
+
+		if (gainedXp > 0)
+		{
+			if (session.getSessionStartTime() == null)
+			{
+				session.startSession();
+			}
+
+			if (aggregateSession.getSessionStartTime() == null)
+			{
+				aggregateSession.startSession();
+				config.setSessionStartTime(aggregateSession.getSessionStartTimeMillis());
+			}
+		}
+	}
+  
+	private static final int MAX_DISTANCE = 2;
+
+	@Subscribe
+	public void onGameObjectSpawned(GameObjectSpawned event)
+	{
+		if (!isInManiacalHunterArea())
+		{
+			return;
+		}
+
+		GameObject gameObject = event.getGameObject();
+		if (gameObject == null
+			|| !ManiacalHunterConstants.BOULDER_TRAP_IDS.contains(gameObject.getId())
+			|| client.getLocalPlayer().getWorldLocation().distanceTo(gameObject.getWorldLocation()) > MAX_DISTANCE)
+		{
+			return;
+		}
+		int id = gameObject.getId();
+
+		if (id == ManiacalHunterConstants.SET_BOULDER_TRAP)
+		{
+			handleTrapLaid();
+		}
+		else if (id == ManiacalHunterConstants.TRIGGERED_BOULDER_TRAP_1 || id == ManiacalHunterConstants.TRIGGERED_BOULDER_TRAP_2)
+		{
+			updateLastTrapStatus("Trap triggered");
+		}
+		else if (id == ManiacalHunterConstants.CAUGHT_MONKEY_BOULDER_1 || id == ManiacalHunterConstants.CAUGHT_MONKEY_BOULDER_2)
+		{
+			updateLastTrapStatus("Monkey caught");
+		}
+	}
+
+	private void handleMonkeyCatch()
+	{
+		session.incrementMonkeysCaught();
+		aggregateSession.incrementMonkeysCaught();
+		config.setMonkeysCaught(aggregateSession.getMonkeysCaught());
+		if (config.milestoneNotification() && session.getMonkeysCaught() > 0 && session.getMonkeysCaught() % config.milestoneInterval() == 0)
+		{
+			notifier.notify("Maniacal Hunter milestone: " + session.getMonkeysCaught() + " monkeys caught!");
+		}
+	}
+
+	private void handlePerfectTailGain() {
+		session.incrementPerfectTails();
+		aggregateSession.incrementPerfectTails();
+		config.setPerfectTails(aggregateSession.getPerfectTails());
+		config.setDamagedTailsSincePerfect(aggregateSession.getDamagedTailsSincePerfect());
+	}
+
+	private void handleDamagedTailGain() {
+		session.incrementDamagedTails();
+		aggregateSession.incrementDamagedTails();
+		config.setDamagedTails(aggregateSession.getDamagedTails());
+		config.setDamagedTailsSincePerfect(aggregateSession.getDamagedTailsSincePerfect());
+	}
+
+	private void handleTrapLaid() {
+		session.incrementTrapsLaid();
+		aggregateSession.incrementTrapsLaid();
+		config.setTrapsLaid(aggregateSession.getTrapsLaid());
+		updateLastTrapStatus("Trap set");
+	}
+
+	private void updateLastTrapStatus(String status) {
+		session.setLastTrapStatus(status);
+		aggregateSession.setLastTrapStatus(status);
+		config.setLastTrapStatus(aggregateSession.getLastTrapStatus());
+	}
+
+	@Provides
+	ManiacalHunterConfig provideConfig(ConfigManager configManager)
+	{
+		return configManager.getConfig(ManiacalHunterConfig.class);
+	}
+
+	@Provides
+	ManiacalHunterSession provideSession()
+	{
+		return new ManiacalHunterSession();
+	}
+
+    @Subscribe
+	public void onConfigChanged(ConfigChanged event)
+	{
+		if (!event.getGroup().equals(CONFIG_GROUP))
+		{
+			return;
+		}
+		if (event.getKey().equals(RESET_BUTTON_KEY))
+		{
+			if (config.resetSession())
+			{
+				reset();
+				configManager.setConfiguration(CONFIG_GROUP, RESET_BUTTON_KEY, false);
+			}
+		}
+		if (event.getKey().equals(CONDENSED_MODE_KEY))
+		{
+			updateDisplayMode();
+		}
+	}
+
+	private void updateDisplayMode()
+	{
+		infoBoxManager.removeInfoBox(infoBox);
+		overlayManager.remove(overlay);
+		if (config.condensedMode())
+		{
+			infoBoxManager.addInfoBox(infoBox);
+		}
+		else
+		{
+			overlayManager.add(overlay);
+		}
+	}
+}

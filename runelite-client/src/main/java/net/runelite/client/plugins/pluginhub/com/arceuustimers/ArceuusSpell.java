@@ -1,0 +1,19 @@
+package net.runelite.client.plugins.pluginhub.com.arceuustimers;
+
+public enum ArceuusSpell
+{
+	THRALL,
+	THRALL_COOLDOWN,
+	CHARGE,
+	CHARGE_COOLDOWN,
+	WARD,
+	WARD_COOLDOWN,
+	SHADOW,
+	SHADOW_COOLDOWN,
+	VIGOUR,
+	CORRUPTION,
+	OFFERING,
+	LURE,
+	MARK,
+	SPELLBOOK_SWAP
+}

@@ -1,0 +1,210 @@
+package net.runelite.client.plugins.pluginhub.com.dklights;
+
+import net.runelite.client.plugins.pluginhub.com.dklights.enums.InventoryState;
+import net.runelite.client.plugins.pluginhub.com.dklights.overlay.DKLightsOverlay;
+import net.runelite.client.plugins.pluginhub.com.dklights.overlay.StatsOverlay;
+import net.runelite.client.plugins.pluginhub.com.dklights.overlay.TeleportOverlay;
+import net.runelite.client.plugins.pluginhub.com.dklights.overlay.LegacyOverlay;
+import net.runelite.client.plugins.pluginhub.com.dklights.pathfinder.Pathfinder;
+import com.google.inject.Provides;
+import java.io.IOException;
+import java.time.Instant;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import javax.inject.Inject;
+
+import lombok.Getter;
+import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.Client;
+import net.runelite.api.coords.WorldPoint;
+import net.runelite.api.events.GameObjectDespawned;
+import net.runelite.api.events.GameObjectSpawned;
+import net.runelite.api.events.GameStateChanged;
+import net.runelite.api.events.GameTick;
+import net.runelite.api.events.ChatMessage;
+import net.runelite.api.events.WallObjectDespawned;
+import net.runelite.api.events.WallObjectSpawned;
+import net.runelite.client.config.ConfigManager;
+import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.plugins.Plugin;
+import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.ui.overlay.OverlayManager;
+
+@Slf4j
+@PluginDescriptor(
+	name = "Dorgesh-Kaan Lights",
+    description="Makes it easier to find broken lamps in Dorgesh-Kaan.",
+    tags={"dorgesh","lamps","lights","kaan","dorgesh-kaan"}
+)
+public class DKLightsPlugin extends Plugin
+{
+
+	@Inject
+	@Getter
+	private Client client;
+
+	@Inject
+	@Getter
+	private DKLightsConfig config;
+
+	@Inject
+	private OverlayManager overlayManager;
+
+	@Inject
+	private DKLightsOverlay overlay;
+
+	@Inject
+	private TeleportOverlay teleportOverlay;
+
+	@Inject
+	private StatsOverlay statsOverlay;
+
+	@Inject
+	private LegacyOverlay legacyOverlay;
+
+    @Getter
+	private DKLightsNavigationManager navigationManager;
+	@Getter
+	private DKLightsStatsTracker statsTracker;
+	@Getter
+	private DKLightsStateManager stateManager;
+
+	private ExecutorService pathfindingExecutor;
+
+	@Getter
+	private Pathfinder pathfinder;
+
+	@Getter
+	private Instant lastTickInstant = Instant.now();
+
+	@Override
+	protected void startUp() throws Exception
+	{
+		overlayManager.add(overlay);
+		overlayManager.add(teleportOverlay);
+		overlayManager.add(statsOverlay);
+		overlayManager.add(legacyOverlay);
+
+		statsTracker = new DKLightsStatsTracker();
+		stateManager = new DKLightsStateManager(client, statsTracker);
+
+		pathfindingExecutor = Executors.newSingleThreadExecutor(r ->
+		{
+			Thread t = new Thread(r, "DKLights-Pathfinder");
+			t.setDaemon(true);
+			return t;
+		});
+
+		try
+		{
+			pathfinder = new Pathfinder();
+		}
+		catch (IOException e)
+		{
+			log.error("Failed to load pathfinder collision data", e);
+			return;
+		}
+
+		navigationManager = new DKLightsNavigationManager(client, config, pathfinder, pathfindingExecutor);
+
+	}
+
+	@Override
+	protected void shutDown() throws Exception
+	{
+		log.info("Dorgesh-Kaan Lights stopped!");
+		overlayManager.remove(overlay);
+		overlayManager.remove(teleportOverlay);
+		overlayManager.remove(statsOverlay);
+		overlayManager.remove(legacyOverlay);
+
+		navigationManager.shutDown();
+
+		if (stateManager != null)
+		{
+			stateManager.shutDown();
+		}
+		if (navigationManager != null)
+		{
+			navigationManager.shutDown();
+		}
+		if (pathfindingExecutor != null)
+		{
+			pathfindingExecutor.shutdown();
+		}
+	}
+
+	@Subscribe
+	public void onGameObjectSpawned(GameObjectSpawned event)
+	{
+		stateManager.onGameObjectSpawned(event.getGameObject());
+	}
+
+	@Subscribe
+	public void onGameObjectDespawned(GameObjectDespawned event)
+	{
+		stateManager.onGameObjectDespawned(event.getGameObject());
+	}
+
+	@Subscribe
+	public void onWallObjectSpawned(WallObjectSpawned event)
+	{
+		stateManager.onWallObjectSpawned(event.getWallObject());
+	}
+
+	@Subscribe
+	public void onWallObjectDespawned(WallObjectDespawned event)
+	{
+		stateManager.onWallObjectDespawned(event.getWallObject());
+	}
+
+	@Subscribe
+	public void onGameStateChanged(GameStateChanged gameStateChanged)
+	{
+		stateManager.onGameStateChanged(gameStateChanged.getGameState());
+	}
+
+	@Subscribe
+	public void onChatMessage(ChatMessage chatMessage)
+	{
+		stateManager.onChatMessage(chatMessage);
+		statsTracker.onChatMessage(chatMessage);
+	}
+
+	@Subscribe
+	public void onGameTick(GameTick gameTick)
+	{
+		lastTickInstant = Instant.now();
+
+		if (client.getLocalPlayer() == null)
+		{
+			return;
+		}
+
+		stateManager.onGameTick();
+
+		if (stateManager.getCurrentArea() == null)
+		{
+			if (navigationManager != null)
+			{
+				navigationManager.clearPathAndTarget();
+			}
+			return;
+		}
+
+		InventoryState inventoryState = InventoryState.NO_LIGHT_BULBS.getInventoryState(client);
+		WorldPoint playerLocation = client.getLocalPlayer().getWorldLocation();
+
+		navigationManager.update(stateManager.getLampStatuses(), stateManager.getLampWallCache(), inventoryState,
+				playerLocation, stateManager.getWireMachine());
+
+		client.clearHintArrow();
+	}
+
+	@Provides
+	DKLightsConfig provideConfig(ConfigManager configManager)
+	{
+		return configManager.getConfig(DKLightsConfig.class);
+	}
+}
+

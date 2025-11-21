@@ -1,0 +1,246 @@
+package net.runelite.client.plugins.pluginhub.com.unpottedreminder;
+
+import net.runelite.client.config.*;
+
+import java.awt.*;
+
+@ConfigGroup("unpottedreminder")
+public interface UnpottedReminderConfig extends Config
+{
+	@ConfigItem(
+			keyName = "enableMelee",
+			name = "Alert for Melee",
+			description = "Whether or not the warning should display when attacking with melee",
+			position = 1
+	)
+	default boolean enableMelee()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+			keyName = "meleeAlertStyle",
+			name = "Melee Alert Style",
+			description = "Which attack style boost will alert you when using melee",
+			position = 2
+	)
+	default MeleeAlertStyle meleeAlertStyle()
+	{
+		return MeleeAlertStyle.ATTACK_AND_STRENGTH;
+	}
+
+	@ConfigItem(
+			keyName = "enableRanged",
+			name = "Alert for Ranged",
+			description = "Whether or not the warning should display when attacking with ranged",
+			position = 3
+	)
+	default boolean enableRanged()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+			keyName = "enableMagic",
+			name = "Alert for Magic",
+			description = "Whether or not the warning should display when attacking with magic",
+			position = 4
+	)
+	default boolean enableMagic()
+	{
+		return false;
+	}
+
+
+	@ConfigItem(
+			keyName = "meleeBoostThreshold",
+			name = "Melee Boost Threshold",
+			description = "Don't alert when melee stats are boosted above this amount",
+			position = 5
+	)
+	default int meleeBoostThreshold()
+	{
+		return 0;
+	}
+
+	@ConfigItem(
+			keyName = "rangedBoostThreshold",
+			name = "Ranged Boost Threshold",
+			description = "Don't alert when ranged stats are boosted above this amount",
+			position = 6
+	)
+	default int rangedBoostThreshold()
+	{
+		return 0;
+	}
+
+	@ConfigItem(
+			keyName = "magicBoostThreshold",
+			name = "Magic Boost Threshold",
+			description = "Don't alert when magic stats are boosted above this amount",
+			position = 7
+	)
+	default int magicBoostThreshold()
+	{
+		return 0;
+	}
+
+	@ConfigItem(
+			keyName = "timeout",
+			name = "Timeout",
+			description = "Stop showing warning after this long in seconds (unless triggered again)",
+			position = 8
+	)
+	@Units(Units.SECONDS)
+	default int timeout()
+	{
+		return 10;
+	}
+
+	@ConfigItem(
+			keyName = "experienceThreshold",
+			name = "Xp Threshold",
+			description = "Don't alert when xp drop is more than this amount (0 to disable)",
+			position = 9
+	)
+	default int experienceThreshold()
+	{
+		return 500;
+	}
+
+	@ConfigItem(
+			keyName = "shouldFlash",
+			name = "Flash overlay",
+			description = "Whether or not the overlay should flash colors",
+			position = 10
+	)
+	default boolean shouldFlash()
+	{
+		return false;
+	}
+
+	@Alpha
+	@ConfigItem(
+			keyName = "flashColor1",
+			name = "Flash color 1",
+			description = "First color to flash between if 'Flash overlay' is on",
+			position = 11
+	)
+	default Color flashColor1()
+	{
+		return new Color(0, 128, 255, 150);
+	}
+
+	@Alpha
+	@ConfigItem(
+			keyName = "flashColor2",
+			name = "Flash color 2",
+			description = "Second color to flash between if 'Flash overlay' is on",
+			position = 12
+	)
+	default Color flashColor2()
+	{
+		return new Color(50, 50, 50, 150);
+	}
+
+	@ConfigItem(
+			keyName = "showOverlay",
+			name = "Show overlay",
+			description = "Whether or not to show the overlay when warning you to pot",
+			position = 13
+	)
+	default boolean showOverlay()
+	{
+		return true;
+	}
+
+	@ConfigItem(
+			keyName = "shouldNotify",
+			name = "Notify",
+			description = "Whether or not to notify you when warning you to pot",
+			position = 14
+	)
+	default boolean shouldNotify()
+	{
+		return false;
+	}
+
+	@Units(Units.SECONDS)
+	@ConfigItem(
+			keyName = "notifyCooldown",
+			name = "Notify Cooldown",
+			description = "Seconds until notifier can be triggered again (0 to disable)",
+			position = 15
+	)
+	default int notifyCooldown()
+	{
+		return 5;
+	}
+
+	@ConfigItem(
+			keyName = "useWhitelist",
+			name = "Enable NPC whitelist",
+			description = "Whether or not to only alert when attacking NPCs in the list below (comma-separated)",
+			position = 16
+	)
+	default boolean useWhitelist()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+			keyName = "whitelist",
+			name = "NPC Whitelist",
+			description = "Only alert when attacking NPCs in this comma-separated list when toggled above (supports wildcards)",
+			position = 17
+	)
+	default String whitelist()
+	{
+		return "";
+	}
+
+	@ConfigItem(
+			keyName = "useBlacklist",
+			name = "Enable NPC blacklist",
+			description = "Whether or not to alert when attacking NPCs in the list below (comma-separated)",
+			position = 18
+	)
+	default boolean useBlacklist()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+			keyName = "blacklist",
+			name = "NPC Blacklist",
+			description = "Don't alert when attacking NPCs in this comma-separated list when toggled above (supports wildcards)",
+			position = 19
+	)
+	default String blacklist()
+	{
+		return "";
+	}
+
+	@ConfigItem(
+			keyName = "alertWhenNotInteracting",
+			name = "Alert when not targeting any NPC",
+			description = "Whether or not to alert when you are not interacting with an NPC",
+			position = 20
+	)
+	default boolean alertWhenNotInteracting()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+			keyName = "onlyInInstances",
+			name = "Only alert in instances",
+			description = "Whether or not to only alert when you are in an instanced area in-game",
+			position = 21
+	)
+	default boolean onlyInInstances()
+	{
+		return false;
+	}
+}
+

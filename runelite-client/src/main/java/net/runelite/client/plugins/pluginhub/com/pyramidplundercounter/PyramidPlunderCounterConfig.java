@@ -1,0 +1,91 @@
+package net.runelite.client.plugins.pluginhub.com.pyramidplundercounter;
+
+import net.runelite.client.config.Config;
+import net.runelite.client.config.ConfigGroup;
+import net.runelite.client.config.ConfigItem;
+
+@ConfigGroup("PyramidPlunderCountConfig")
+public interface PyramidPlunderCounterConfig extends Config
+{
+	@ConfigItem(
+			position = 0,
+			keyName = "showChestsLooted",
+			name = "Chests Looted",
+			description = "Displays the number of chests looted"
+	)
+	default boolean showChestsLooted() {
+		return true;
+	}
+
+	@ConfigItem(
+			position = 1,
+			keyName = "showSarcoLooted",
+			name = "Sarcophagus Looted",
+			description = "Displays the number of sarcophagus looted"
+	)
+	default boolean showSarcoLooted() {
+		return true;
+	}
+
+	@ConfigItem(
+			position = 2,
+			keyName = "showChestsSinceLastSceptre",
+			name = "Chests since last Sceptre",
+			description = "Displays the number of chests looted since receiving the latest sceptre"
+	)
+	default boolean showChestsSinceLastSceptre() {
+		return true;
+	}
+
+	@ConfigItem(
+			position = 3,
+			keyName = "showSarcoSinceLastSceptre",
+			name = "Sarcos since last Sceptre",
+			description = "Displays the number of sarcos looted since receiving the latest sceptre"
+	)
+	default boolean showSarcosSinceLastSceptre() {
+		return true;
+	}
+
+	@ConfigItem(
+			position = 4,
+			keyName = "showChance",
+			name = "% Chance of having received at least one sceptre",
+			description = "Displays the percentage chance of having received at least one sceptre."
+	)
+	default boolean showChance() {
+		return true;
+	}
+
+	@ConfigItem(
+			position = 5,
+			keyName = "showPetChance",
+			name = "% Chance of having received pet",
+			description = "Displays the percentage chance of having received at least one pet."
+	)
+	default boolean showPetChance() {
+		return true;
+	}
+
+	@ConfigItem(
+			position = 6,
+			keyName = "saveData",
+			name = "Save your data",
+			description = "Save your data cross-sessions to keep track of it."
+	)
+
+	default boolean saveData() {
+		return true;
+	}
+
+	@ConfigItem(
+			position = 7,
+			keyName = "showResetTooltip",
+			name = "Show tooltip on how to reset your data",
+			description = "Shows a tooltip on how to reset your data."
+	)
+
+	default boolean showResetTooltip() {
+		return false;
+	}
+}

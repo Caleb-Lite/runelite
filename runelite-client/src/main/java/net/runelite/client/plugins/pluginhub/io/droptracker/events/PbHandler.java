@@ -1,0 +1,832 @@
+package net.runelite.client.plugins.pluginhub.io.droptracker.events;
+
+import net.runelite.client.plugins.pluginhub.io.droptracker.models.CustomWebhookBody;
+import net.runelite.client.plugins.pluginhub.io.droptracker.models.submissions.SubmissionType;
+import net.runelite.client.plugins.pluginhub.io.droptracker.util.NpcUtilities;
+import net.runelite.client.plugins.pluginhub.io.droptracker.util.DebugLogger;
+import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.*;
+import net.runelite.api.annotations.Varbit;
+import org.apache.commons.lang3.ObjectUtils;
+import org.apache.commons.lang3.tuple.Pair;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.VisibleForTesting;
+
+import java.time.Duration;
+import java.time.LocalTime;
+import java.time.temporal.Temporal;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import static java.time.temporal.ChronoField.*;
+import static org.apache.commons.lang3.ObjectUtils.defaultIfNull;
+
+@Slf4j
+public class PbHandler extends BaseEventHandler {
+
+    @VisibleForTesting
+    static final int MAX_BAD_TICKS = 10;
+    private static final long DUPLICATE_THRESHOLD = 5000;
+
+    private static final Pattern BOSS_COUNT_PATTERN = Pattern.compile(
+        "Your (?<key>[\\w\\s:'-]+) (?<type>kill|chest|completion|success) count is:? (?<value>[\\d,]+)", 
+        Pattern.CASE_INSENSITIVE
+    );
+    
+    private static final Pattern SECONDARY_BOSS_PATTERN = Pattern.compile(
+        "Your (?<type>completed|subdued) (?<key>[\\w\\s:]+) count is:?[ \\t]*(?<value>[\\d,]+)",
+        Pattern.CASE_INSENSITIVE
+    );
+    
+    private static final Pattern TIME_WITH_PB_PATTERN = Pattern.compile(
+        "(?<prefix>.*?)(?<duration>\\d*:?\\d+:\\d+(?:\\.\\d+)?)\\.?\\s*(?:Personal best: (?<pbtime>\\d*:?\\d+:\\d+(?:\\.\\d+)?)\\.?\\s*)?(?<pbIndicator>\\(new personal best\\))?",
+        Pattern.CASE_INSENSITIVE
+    );
+    
+    private static final Pattern TEAM_SIZE_PATTERN = Pattern.compile(
+        "Team size:\\s*(?<size>\\d+|Solo|\\d\\+)\\s*(?:players?)?",
+        Pattern.CASE_INSENSITIVE
+    );
+
+    private final AtomicInteger badTicks = new AtomicInteger();
+    private final AtomicReference<KillData> killData = new AtomicReference<>();
+    private String lastProcessedKill = null;
+    private long lastProcessedTime = 0;
+    private long lastKillDataUpdate = 0L;
+
+    private static class KillData {
+        final String boss;
+        final Integer count;
+        final Duration time;
+        final Duration bestTime;
+        final boolean isPersonalBest;
+        final String teamSize;
+        final String gameMessage;
+
+        KillData(String boss, Integer count, Duration time, Duration bestTime, 
+                boolean isPersonalBest, String teamSize, String gameMessage) {
+            this.boss = boss;
+            this.count = count;
+            this.time = time;
+            this.bestTime = bestTime;
+            this.isPersonalBest = isPersonalBest;
+            this.teamSize = teamSize;
+            this.gameMessage = gameMessage;
+        }
+
+        boolean isValid() {
+            if (boss != null) {
+                if (boss.contains("Doom")) {
+                    // Doom levels do not include count; so we do not need a null check here
+                    return time != null && !time.isZero();
+                }
+            }
+            return boss != null && count != null && time != null && !time.isZero();
+        }
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return config.pbEmbeds();
+    }
+
+    public void onGameMessage(String message) {
+        if (!isEnabled()) return;
+        parseMessage(message).ifPresent(this::updateKillData);
+    }
+
+    public void onFriendsChatNotification(String message) {
+        if (message.startsWith("Congratulations - your raid is complete!")) {
+            onGameMessage(message);
+        }
+    }
+
+    public void onTick() {
+        KillData data = killData.get();
+        if (data == null) {
+            if (badTicks.incrementAndGet() > MAX_BAD_TICKS) {
+                reset();
+            }
+            return;
+        }
+
+        if (data.isValid() && isEnabled()) {
+            if (data.count == null) {
+                /* Doom does not have KCs available for individual floors, so we need to handle the data anyways for this boss */
+                /* Otherwise, we should handle other data with no count included consistently with before */
+                if (data.boss.contains("Doom")) {
+                    processKill(data);
+                    reset();
+                }
+            } else {
+                processKill(data);
+                reset();
+            }
+        } else {
+            // Allow partial data (e.g., time before count or vice versa) to coalesce for up to 10 seconds
+            long now = System.currentTimeMillis();
+            if (now - lastKillDataUpdate > 10_000) {
+                reset();
+            }
+        }
+    }
+
+    private Optional<KillData> parseMessage(String message) {
+        if (message.startsWith("Preparation")) {
+            return Optional.empty();
+        }
+
+        // Try boss count first
+        Optional<Pair<String, Integer>> bossCount = parseBossCount(message);
+        if (bossCount.isPresent()) {
+            Pair<String, Integer> pair = bossCount.get();
+            return Optional.of(new KillData(pair.getLeft(), pair.getRight(), 
+                Duration.ZERO, Duration.ZERO, false, null, message));
+        }
+
+        // Try time data
+        return parseTimeData(message);
+    }
+
+    private Optional<Pair<String, Integer>> parseBossCount(String message) {
+        Matcher primary = BOSS_COUNT_PATTERN.matcher(message);
+        if (primary.find()) {
+            String boss = parsePrimaryBoss(primary.group("key"), primary.group("type"));
+            if (boss != null) {
+                try {
+                    int count = Integer.parseInt(primary.group("value").replace(",", ""));
+                    return Optional.of(Pair.of(boss, count));
+                } catch (NumberFormatException e) {
+                    log.debug("Failed to parse kill count: {}", primary.group("value"));
+                }
+            }
+        }
+
+        Matcher secondary = SECONDARY_BOSS_PATTERN.matcher(message);
+        if (secondary.find()) {
+            String boss = parseSecondaryBoss(secondary.group("key"));
+            if (boss != null) {
+                try {
+                    int count = Integer.parseInt(secondary.group("value").replace(",", ""));
+                    return Optional.of(Pair.of(boss, count));
+                } catch (NumberFormatException e) {
+                    log.debug("Failed to parse kill count: {}", secondary.group("value"));
+                }
+            }
+        }
+
+        return Optional.empty();
+    }
+
+    private Optional<KillData> parseTimeData(String message) {
+        Matcher matcher = TIME_WITH_PB_PATTERN.matcher(message);
+        if (!matcher.find()) {
+            return Optional.empty();
+        }
+
+        try {
+            Duration time = parseTime(matcher.group("duration"));
+            String pbTimeStr = matcher.group("pbtime");
+            Duration bestTime = pbTimeStr != null ? parseTime(pbTimeStr) : Duration.ZERO;
+            boolean isPersonalBest = matcher.group("pbIndicator") != null;
+            
+            String bossName = determineBossFromContext(message);
+            String teamSize = extractTeamSize(message, bossName);
+            
+            // For CoX, PB lines often include Olm split but team size isn't always on KC line. If team size missing, try to extract now.
+            if (teamSize == null && message.contains("Team size:")) {
+                teamSize = extractTeamSize(message, bossName);
+            }
+            return Optional.of(new KillData(bossName, null, time, bestTime, 
+                isPersonalBest, teamSize, message));
+                
+        } catch (Exception e) {
+            log.error("Error parsing time data: {}", e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    private String determineBossFromContext(String message) {
+        if (message.contains("Tombs of Amascut")) {
+            return message.contains("Expert Mode") ? "Tombs of Amascut: Expert Mode" : "Tombs of Amascut";
+        }
+        if (message.contains("Theatre of Blood")) {
+            return "Theatre of Blood";
+        }
+        if (message.contains("Chambers of Xeric")) {
+            return "Chambers of Xeric";
+        }
+        // Chambers of Xeric time lines often omit the raid name but include the Olm split
+        if (message.contains("Olm Duration")) {
+            return "Chambers of Xeric";
+        }
+        if (message.contains("Corrupted challenge")) {
+            return "Corrupted Hunllef";
+        }
+        if (message.contains("Challenge duration")) {
+            return "Crystalline Hunllef";
+        }
+        if (message.contains("Colosseum duration")) {
+            return "Sol Heredit";
+        }
+        if (message.contains("Delve level")) {
+            return extractDelveBoss(message);
+        }
+        // With an unknown context, don't guess--defer to subsequent kill-count parsing
+        return null;
+    }
+
+    private String extractDelveBoss(String message) {
+        Pattern delvePattern = Pattern.compile("Delve level: (\\S+)");
+        Matcher matcher = delvePattern.matcher(message);
+        if (matcher.find()) {
+            return "Doom of Mokhaiotl (Level:" + matcher.group(1).trim() + ")";
+        }
+        return "Doom of Mokhaiotl";
+    }
+
+    private String extractTeamSize(String message, String bossName) {
+        Matcher teamMatcher = TEAM_SIZE_PATTERN.matcher(message);
+        if (teamMatcher.find()) {
+            String raw = teamMatcher.group("size");
+            if (raw == null) {
+                return "Solo";
+            }
+            if (raw.equalsIgnoreCase("solo")) {
+                return "Solo";
+            }
+            return raw;
+        }
+
+        boolean mentionsToa = message.contains("Tombs of Amascut") || (bossName != null && bossName.contains("Tombs of Amascut"));
+        boolean mentionsTob = message.contains("Theatre of Blood") || (bossName != null && bossName.contains("Theatre of Blood"));
+        boolean mentionsRoyalTitans = message.contains("Royal Titans") || (bossName != null && bossName.contains("Royal Titans"));
+
+        if (mentionsToa) {
+            return getToaTeamSize();
+        }
+        if (mentionsTob) {
+            return getTobTeamSize();
+        }
+        if (mentionsRoyalTitans) {
+            return getRoyalTitansTeamSize();
+        }
+
+        return "Solo";
+    }
+
+    private void updateKillData(KillData newData) {
+        DebugLogger.log("[PbHandler.java:247] updateKillData called with newData: " + newData);
+        killData.getAndUpdate(old -> {
+            if (old == null) {
+                lastKillDataUpdate = System.currentTimeMillis();
+                return newData;
+            }
+
+            String boss = defaultIfNull(newData.boss, old.boss);
+            DebugLogger.log("[PbHandler.java:254] set boss to new data: " + newData.boss + " from old: " + old.boss);
+            Integer count = defaultIfNull(newData.count, old.count);
+            Duration time = newData.time != null && !newData.time.isZero() ? newData.time : old.time;
+            Duration bestTime = newData.bestTime != null && !newData.bestTime.isZero() ? newData.bestTime : old.bestTime;
+            boolean isPersonalBest = newData.isPersonalBest || old.isPersonalBest;
+            String teamSize = defaultIfNull(newData.teamSize, old.teamSize);
+            String gameMessage = defaultIfNull(newData.gameMessage, old.gameMessage);
+            DebugLogger.log("[PbHandler.java:260] updateKillData completed -- returning: " + new KillData(boss, count, time, bestTime, isPersonalBest, teamSize, gameMessage).toString());
+            lastKillDataUpdate = System.currentTimeMillis();
+            return new KillData(boss, count, time, bestTime, isPersonalBest, teamSize, gameMessage);
+        });
+        DebugLogger.log("[PbHandler.java:263] updateKillData completed. boss / time / count:" + newData.boss + "/" + newData.time + "/" + newData.count);
+    }
+
+    // === KILL PROCESSING ===
+    private void processKill(KillData data) {
+        DebugLogger.log("[PbHandler.java:109] processKill: " + data);
+        if (data == null || !data.isValid()) {
+            DebugLogger.log("[PbHandler.java:268] Invalid kill data, skipping processing");
+            log.debug("Invalid kill data, skipping processing");
+            return;
+        }
+
+        // Duplicate prevention
+        String killIdentifier = data.boss + "-" + data.count;
+        long currentTime = System.currentTimeMillis();
+        
+        if (killIdentifier.equals(lastProcessedKill) && 
+            (currentTime - lastProcessedTime) < DUPLICATE_THRESHOLD) {
+            if (!data.boss.contains("1-8")) {
+                
+                DebugLogger.log("[PbHandler.java:281] Duplicate kill detected, skipping: " + killIdentifier);
+                log.debug("Duplicate kill detected, skipping: {}", killIdentifier);
+                return;
+            }
+        }
+        
+        lastProcessedKill = killIdentifier;
+        lastProcessedTime = currentTime;
+
+        if (clientThread == null) {
+            DebugLogger.log("[PbHandler.java:291] ClientThread is null, cannot process kill");
+            log.error("ClientThread is null, cannot process kill");
+            return;
+        }
+
+        clientThread.invokeLater(() -> {
+            try {
+                sendKillNotification(data);
+            } catch (Exception e) {
+                DebugLogger.log("[PbHandler.java:300] Error processing kill notification: " + e.getMessage());
+                log.error("Error processing kill notification: {}", e.getMessage(), e);
+            }
+        });
+    }
+
+    private void sendKillNotification(KillData data) {
+        String player = getPlayerName();
+        String formattedTime = formatTime(data.time, isPreciseTiming(client));
+        String formattedBestTime = formatTime(data.bestTime, isPreciseTiming(client));
+        
+        CustomWebhookBody webhook = createWebhookBody(player + " has killed a boss:");
+        CustomWebhookBody.Embed embed = createEmbed(player + " has killed a boss:", "npc_kill");
+        
+        Map<String, Object> fieldData = new HashMap<>();
+        fieldData.put("boss_name", data.boss);
+        fieldData.put("kill_time", formattedTime != null ? formattedTime : "N/A");
+        fieldData.put("best_time", formattedBestTime != null ? formattedBestTime : "N/A");
+        fieldData.put("is_pb", data.isPersonalBest);
+        fieldData.put("team_size", data.teamSize != null ? data.teamSize : "Solo");
+        fieldData.put("killcount", data.count);
+        
+        addFields(embed, fieldData);
+        webhook.getEmbeds().add(embed);
+        
+        sendData(webhook, SubmissionType.KILL_TIME);
+    }
+
+    public void reset() {
+        killData.set(null);
+        badTicks.set(0);
+    }
+
+    private Duration parseTime(String timeStr) {
+        if (timeStr == null || timeStr.trim().isEmpty()) {
+            return Duration.ZERO;
+        }
+
+        try {
+            String timePart = timeStr.contains(".") ? timeStr.substring(0, timeStr.indexOf('.')) : timeStr;
+            String[] timeParts = timePart.split(":");
+
+            long hours = 0, minutes = 0, seconds = 0, millis = 0;
+
+            if (timeParts.length == 3) {  // h:m:s
+                hours = Long.parseLong(timeParts[0]);
+                minutes = Long.parseLong(timeParts[1]);
+                seconds = Long.parseLong(timeParts[2]);
+            } else if (timeParts.length == 2) {  // m:s
+                minutes = Long.parseLong(timeParts[0]);
+                seconds = Long.parseLong(timeParts[1]);
+            }
+
+            if (timeStr.contains(".")) {
+                String millisStr = timeStr.substring(timeStr.indexOf('.') + 1);
+                while (millisStr.length() < 3) {
+                    millisStr += "0";
+                }
+                millis = Long.parseLong(millisStr);
+            }
+
+            return Duration.ofHours(hours).plusMinutes(minutes).plusSeconds(seconds).plusMillis(millis);
+
+        } catch (Exception e) {
+            log.error("Error parsing time: {}", e.getMessage());
+            return Duration.ZERO;
+        }
+    }
+
+    @NotNull
+    public String formatTime(@Nullable Duration duration, boolean precise) {
+        Temporal time = ObjectUtils.defaultIfNull(duration, Duration.ZERO).addTo(LocalTime.of(0, 0));
+        StringBuilder sb = new StringBuilder();
+
+        int h = time.get(HOUR_OF_DAY);
+        if (h > 0) sb.append(String.format("%02d", h)).append(':');
+
+        sb.append(String.format("%02d", time.get(MINUTE_OF_HOUR))).append(':');
+        sb.append(String.format("%02d", time.get(SECOND_OF_MINUTE)));
+
+        if (precise) sb.append('.').append(String.format("%02d", time.get(MILLI_OF_SECOND) / 10));
+
+        return sb.toString();
+    }
+
+    public boolean isPreciseTiming(@NotNull Client client) {
+        @Varbit int ENABLE_PRECISE_TIMING = 11866;
+        return client.getVarbitValue(ENABLE_PRECISE_TIMING) > 0;
+    }
+
+    // === BOSS PARSING METHODS ===
+    @Nullable
+    private static String parsePrimaryBoss(String boss, String type) {
+        switch (type.toLowerCase()) {
+            case "chest":
+                if ("Barrows".equalsIgnoreCase(boss)) return boss;
+                if ("Lunar".equals(boss)) return boss + " " + type;
+                return null;
+            case "completion":
+                if (NpcUtilities.GAUNTLET_NAME.equalsIgnoreCase(boss)) return NpcUtilities.GAUNTLET_BOSS;
+                if (NpcUtilities.CG_NAME.equalsIgnoreCase(boss)) return NpcUtilities.CG_BOSS;
+                return null;
+            case "kill":
+            case "success":
+                return boss;
+            default:
+                return null;
+        }
+    }
+
+    private static String parseSecondaryBoss(String boss) {
+        if (boss == null || "Wintertodt".equalsIgnoreCase(boss)) return boss;
+
+        int modeSeparator = boss.lastIndexOf(':');
+        String raid = modeSeparator > 0 ? boss.substring(0, modeSeparator) : boss;
+        if (raid.equalsIgnoreCase("Theatre of Blood") || raid.equalsIgnoreCase("Tombs of Amascut") ||
+            raid.equalsIgnoreCase("Chambers of Xeric") || raid.equalsIgnoreCase("Chambers of Xeric Challenge Mode")) {
+            return boss;
+        }
+        return null;
+    }
+
+    // === TEAM SIZE METHODS ===
+    @SuppressWarnings("deprecation")
+    private String getTobTeamSize() {
+        Integer teamSize = Math.min(client.getVarbitValue(Varbits.THEATRE_OF_BLOOD_ORB1), 1) +
+                Math.min(client.getVarbitValue(Varbits.THEATRE_OF_BLOOD_ORB2), 1) +
+                Math.min(client.getVarbitValue(Varbits.THEATRE_OF_BLOOD_ORB3), 1) +
+                Math.min(client.getVarbitValue(Varbits.THEATRE_OF_BLOOD_ORB4), 1) +
+                Math.min(client.getVarbitValue(Varbits.THEATRE_OF_BLOOD_ORB5), 1);
+        return teamSize == 1 ? "Solo" : teamSize.toString();
+    }
+
+    @SuppressWarnings("deprecation")
+    private String getToaTeamSize() {
+        Integer teamSize = Math.min(client.getVarbitValue(Varbits.TOA_MEMBER_0_HEALTH), 1) +
+                Math.min(client.getVarbitValue(Varbits.TOA_MEMBER_1_HEALTH), 1) +
+                Math.min(client.getVarbitValue(Varbits.TOA_MEMBER_2_HEALTH), 1) +
+                Math.min(client.getVarbitValue(Varbits.TOA_MEMBER_3_HEALTH), 1) +
+                Math.min(client.getVarbitValue(Varbits.TOA_MEMBER_4_HEALTH), 1) +
+                Math.min(client.getVarbitValue(Varbits.TOA_MEMBER_5_HEALTH), 1) +
+                Math.min(client.getVarbitValue(Varbits.TOA_MEMBER_6_HEALTH), 1) +
+                Math.min(client.getVarbitValue(Varbits.TOA_MEMBER_7_HEALTH), 1);
+        return teamSize == 1 ? "Solo" : teamSize.toString();
+    }
+
+    @SuppressWarnings("deprecation")
+    private String getRoyalTitansTeamSize() {
+        int size = client.getPlayers().size();
+        return size == 1 ? "Solo" : String.valueOf(size);
+    }
+
+//    public void generateTestBossMessage(String bossName, boolean newPersonalBest) {
+//        DebugLogger.log("Got bossName and newPersonalBest from generateTestBossMessage call:");
+//        DebugLogger.log(bossName + " - " + newPersonalBest + " -- status of bool in pbhandler= " + shouldSendTestAsPb);
+//        if (bossName == null) {
+//            return;
+//        }
+//        String b = bossName.toLowerCase(Locale.ROOT).trim();
+//        switch (b) {
+//            /* Chambers of Xeric */
+//            case "cox":
+//            case "chambers":
+//            case "chambers of xeric":
+//                onGameMessage("Congratulations - Your raid is complete!");
+//                onGameMessage(newPersonalBest
+//                    ? "Team size: 3 players Duration: 27:32 (new personal best) Olm Duration: 4:11"
+//                    : "Team size: 3 players Duration: 27:32 Personal best: 22:26 Olm Duration: 4:11");
+//                onGameMessage("Your completed Chambers of Xeric count is 52.");
+//                return;
+//            case "cox cm":
+//            case "chambers cm":
+//            case "chambers of xeric challenge mode":
+//            case "challenge mode":
+//                onGameMessage("Congratulations - Your raid is complete!");
+//                onGameMessage(newPersonalBest
+//                    ? "Team size: 3 players Duration: 32:32 (new personal best) Olm Duration: 4:11"
+//                    : "Team size: 3 players Duration: 32:32 Personal best: 28:26 Olm Duration: 4:11");
+//                onGameMessage("Your completed Chambers of Xeric Challenge Mode count is 61.");
+//                return;
+//
+//            /* Tombs of Amascut */
+//            case "toa entry":
+//            case "tombs entry":
+//            case "tombs of amascut: entry mode":
+//            case "tombs of amascut entry mode":
+//                onGameMessage("Challenge complete: The Wardens. Duration: 3:02");
+//                onGameMessage(newPersonalBest
+//                    ? "Tombs of Amascut: Entry Mode total completion time: 14:36.4 (new personal best)"
+//                    : "Tombs of Amascut: Entry Mode total completion time: 16:37.4. Personal best: 14:37.4");
+//                onGameMessage("Your completed Tombs of Amascut: Entry Mode count is 15.");
+//                return;
+//            case "toa":
+//            case "tombs":
+//            case "tombs of amascut":
+//                onGameMessage("Challenge complete: The Wardens. Duration: 3:02");
+//                onGameMessage(newPersonalBest
+//                    ? "Tombs of Amascut total completion time: 14:36.4 (new personal best)"
+//                    : "Tombs of Amascut total completion time: 16:37.4. Personal best: 14:37.4");
+//                onGameMessage("Your completed Tombs of Amascut count is 15.");
+//                return;
+//            case "toa expert":
+//            case "tombs expert":
+//            case "tombs of amascut expert mode":
+//                onGameMessage("Challenge complete: The Wardens. Duration: 3:02");
+//                onGameMessage(newPersonalBest
+//                    ? "Tombs of Amascut: Expert Mode total completion time: 18:37.4 (new personal best)"
+//                    : "Tombs of Amascut: Expert Mode total completion time: 1:23:38.2. Personal best: 1:20:38.4");
+//                onGameMessage("Your completed Tombs of Amascut: Expert Mode count is 20.");
+//                return;
+//
+//            /* Theatre of Blood */
+//            case "tob entry":
+//            case "theatre entry":
+//            case "theatre of blood: entry mode":
+//            case "theatre of blood entry mode":
+//                onGameMessage(newPersonalBest
+//                    ? "Theatre of Blood completion time: 25:40 (new personal best)"
+//                    : "Theatre of Blood completion time: 18:12. Personal best: 17:09");
+//                onGameMessage("Your completed Theatre of Blood: Entry Mode count is: 1.");
+//                return;
+//            case "tob":
+//            case "theatre":
+//            case "theatre of blood":
+//                onGameMessage(newPersonalBest
+//                    ? "Theatre of Blood completion time: 25:40 (new personal best)"
+//                    : "Theatre of Blood completion time: 18:12. Personal best: 17:09");
+//                onGameMessage("Your completed Theatre of Blood count is 11.");
+//                return;
+//            case "tob hard":
+//            case "tob hm":
+//            case "theatre of blood: hard mode":
+//            case "theatre of blood hard mode":
+//                onGameMessage(newPersonalBest
+//                    ? "Theatre of Blood completion time: 24:40 (new personal best)"
+//                    : "Theatre of Blood completion time: 25:12. Personal best: 23:09");
+//                onGameMessage("Your completed Theatre of Blood: Hard Mode count is 11.");
+//                return;
+//
+//            /* Gauntlet */
+//            case "gauntlet":
+//                onGameMessage(newPersonalBest
+//                    ? "Challenge duration: 6:22 (new personal best)."
+//                    : "Challenge duration: 3:06. Personal best: 1:47.");
+//                onGameMessage("Your Gauntlet completion count is 40.");
+//                return;
+//            case "cg":
+//            case "corrupted gauntlet":
+//                onGameMessage(newPersonalBest
+//                    ? "Corrupted challenge duration: 7:55 (new personal best)."
+//                    : "Corrupted challenge duration: 3:06. Personal best: 1:47.");
+//                onGameMessage("Your Corrupted Gauntlet completion count is 40.");
+//                return;
+//
+//            /* Nightmare */
+//            case "nightmare":
+//                onGameMessage(newPersonalBest
+//                    ? "Team size: 6+ players Fight duration: 3:57 (new personal best)"
+//                    : "Team size: 6+ players Fight duration: 1:46. Personal best: 1:46");
+//                onGameMessage("Your nightmare kill count is 31.");
+//                return;
+//            case "phosani":
+//            case "phosani's nightmare":
+//                onGameMessage(newPersonalBest
+//                    ? "Team size: Solo Fight Duration: 1:05:30 (new personal best)"
+//                    : "Team size: Solo Fight Duration: 8:58. Personal best: 8:30");
+//                onGameMessage("Your Phosani's Nightmare kill count is: 100.");
+//                return;
+//
+//            /* Other bosses */
+//            case "zulrah":
+//                onGameMessage(newPersonalBest
+//                    ? "Fight duration: 0:58 (new personal best)"
+//                    : "Fight duration: 1:02. Personal best: 0:59");
+//                onGameMessage("Congratulations - Your Zulrah kill count is: 559.");
+//                return;
+//            case "hydra":
+//            case "alchemical hydra":
+//                onGameMessage(newPersonalBest
+//                    ? "Fight duration: 1:20 (new personal best)."
+//                    : "Fight duration: 1:49. Personal best: 1:28.");
+//                onGameMessage("Your Alchemical Hydra kill count is: 150.");
+//                return;
+//            case "amoxliatl":
+//            case "amoxialtl":
+//                onGameMessage(newPersonalBest
+//                    ? "Fight duration: 0:29.40 (new personal best)"
+//                    : "Fight duration: 1:05.40. Personal best: 0:29.40");
+//                onGameMessage("Your Amoxliatl kill count is: 42.");
+//                return;
+//            case "araxxor":
+//                onGameMessage(newPersonalBest
+//                    ? "Fight duration: 1:15.60 (new personal best)"
+//                    : "Fight duration: 1:19.20. Personal best: 1:00.00");
+//                onGameMessage("Your Araxxor kill count is 75.");
+//                return;
+//            case "duke":
+//            case "duke sucellus":
+//                onGameMessage(newPersonalBest
+//                    ? "Fight duration: 1:34.20 (new personal best)"
+//                    : "Fight duration: 2:52.20. Personal best: 1:37.80");
+//                onGameMessage("Your Duke Sucellus kill count is: 150.");
+//                return;
+//            case "jad":
+//            case "tztok-jad":
+//            case "fight caves":
+//                onGameMessage(newPersonalBest
+//                    ? "Duration: 1:47:28.20 (new personal best)"
+//                    : "Duration: 59:20. Personal best: 46:16");
+//                onGameMessage("Your TzTok-Jad kill count is 5.");
+//                return;
+//            case "colosseum":
+//            case "fortis colosseum":
+//            case "sol heredit":
+//                onGameMessage(newPersonalBest
+//                    ? "Colosseum duration: 26:13.20 (new personal best)"
+//                    : "Colosseum duration: 37:51.60. Personal best: 30:12.00");
+//                onGameMessage("Your Sol Heredit kill count is: 10.");
+//                return;
+//            case "fragment of seren":
+//                onGameMessage(newPersonalBest
+//                    ? "Fight duration: 3:29 (new personal best)."
+//                    : "Fight duration: 4:25.20. Personal best: 3:25.20.");
+//                onGameMessage("Your Fragment of Seren kill count is: 2.");
+//                return;
+//            case "galvek":
+//                onGameMessage(newPersonalBest
+//                    ? "Fight duration: 2:19 (new personal best)"
+//                    : "Fight duration: 3:48.60. Personal best: 2:58.80");
+//                onGameMessage("Your Galvek kill count is: 2.");
+//                return;
+//            case "grotesque guardians":
+//                onGameMessage(newPersonalBest
+//                    ? "Fight duration: 1:55 (new personal best)"
+//                    : "Fight duration: 2:12. Personal best: 1:18");
+//                onGameMessage("Your Grotesque Guardians kill count is 413.");
+//                return;
+//            case "hespori":
+//                onGameMessage(newPersonalBest
+//                    ? "Fight duration: 0:35 (new personal best)"
+//                    : "Fight duration: 1:16. Personal best: 0:44");
+//                onGameMessage("Your Hespori kill count is: 134.");
+//                return;
+//            case "colossal wyrm basic":
+//            case "colossal wyrm agility basic":
+//                onGameMessage(newPersonalBest
+//                    ? "Lap duration: 2:52.80 (new personal best)"
+//                    : "Lap duration: 2:52.80. Personal best: 1:22.20");
+//                onGameMessage("Your Colossal Wyrm Agility Course (Basic) lap count is: 3.");
+//                return;
+//            case "colossal wyrm advanced":
+//            case "colossal wyrm agility advanced":
+//                onGameMessage(newPersonalBest
+//                    ? "Lap duration: 1:01.80 (new personal best)"
+//                    : "Lap duration: 1:01.80. Personal best: 0:59.40");
+//                onGameMessage("Your Colossal Wyrm Agility Course (Advanced) lap count is: 217.");
+//                return;
+//            case "priff agility":
+//            case "prifddinas agility":
+//                onGameMessage(newPersonalBest
+//                    ? "Lap duration: 1:15.00 (new personal best)"
+//                    : "Lap duration: 1:15.00. Personal best: 1:04.80");
+//                onGameMessage("Your Prifddinas Agility Course lap count is: 92.");
+//                return;
+//            case "sepulchre floor":
+//            case "hallowed sepulchre floor":
+//                onGameMessage(newPersonalBest
+//                    ? "Floor 4 time: 1:46.80 (new personal best)"
+//                    : "Floor 4 time: 1:46.80. Personal best: 1:36.60");
+//                onGameMessage("You have completed Floor 4 of the Hallowed Sepulchre! Total completions: 125.");
+//                return;
+//            case "sepulchre total":
+//            case "hallowed sepulchre total":
+//                onGameMessage(newPersonalBest
+//                    ? "Overall time: 6:48.60 (new personal best)"
+//                    : "Overall time: 6:48.60. Personal best: 6:18.00");
+//                onGameMessage("You have completed Floor 5 of the Hallowed Sepulchre! Total completions: 95.");
+//                return;
+//            case "inferno":
+//            case "tzkal-zuk":
+//                onGameMessage(newPersonalBest
+//                    ? "Duration: 2:21:41 (new personal best)"
+//                    : "Duration: 2:23:41. Personal best: 1:09:04");
+//                onGameMessage("Your TzKal-Zuk kill count is 1.");
+//                return;
+//            case "muspah":
+//            case "phantom muspah":
+//                onGameMessage(newPersonalBest
+//                    ? "Fight duration: 2:02 (new personal best)"
+//                    : "Fight duration: 3:11. Personal best: 2:17");
+//                onGameMessage("Your Phantom Muspah kill count is: 12.");
+//                return;
+//            case "six jads":
+//            case "6 jads":
+//            case "sixth challenge":
+//                onGameMessage(newPersonalBest
+//                    ? "Challenge duration: 6:31.80 (new personal best)"
+//                    : "Challenge duration: 6:02. Personal best: 5:31");
+//                onGameMessage("Your completion count for Tzhaar-Ket-Rak's Sixth Challenge is 1.");
+//                return;
+//            case "hueycoatl":
+//                onGameMessage(newPersonalBest
+//                    ? "Fight duration: 3:04 (new personal best)"
+//                    : "Fight duration: 3:09.60. Personal best: 0:58.20");
+//                onGameMessage("Your Hueycoatl kill count is 3.");
+//                return;
+//            case "leviathan":
+//                onGameMessage(newPersonalBest
+//                    ? "Fight duration: 2:16.80 (new personal best)"
+//                    : "Fight duration: 3:19. Personal best: 2:50");
+//                onGameMessage("Your Leviathan kill count is 2.");
+//                return;
+//            case "royal titans":
+//                onGameMessage(newPersonalBest
+//                    ? "Fight duration: 2:50 (new personal best)"
+//                    : "Fight Duration: 2:33. Personal best: 0:53");
+//                onGameMessage("Your Royal Titans kill count is: 9.");
+//                return;
+//            case "whisperer":
+//                onGameMessage(newPersonalBest
+//                    ? "Fight duration: 2:18.60 (new personal best)"
+//                    : "Fight duration: 3:06.00. Personal best: 2:29.40");
+//                onGameMessage("Your whisperer kill count is 4.");
+//                return;
+//            case "vardorvis":
+//                onGameMessage(newPersonalBest
+//                    ? "Fight duration: 2:39 (new personal best)"
+//                    : "Fight duration: 4:04. Personal best: 1:13");
+//                onGameMessage("Your Vardorvis kill count is: 18.");
+//                return;
+//            case "vorkath":
+//                onGameMessage(newPersonalBest
+//                    ? "Fight duration: 1:53 (new personal best)"
+//                    : "Fight duration: 4:04. Personal best: 1:13");
+//                onGameMessage("Your Vorkath kill count is: 168.");
+//                return;
+//            case "yama":
+//                onGameMessage(newPersonalBest
+//                    ? "Fight duration: 3:22 (new personal best)"
+//                    : "Fight duration: 4:04. Personal best: 3:50");
+//                onGameMessage("Your Yama success count is 20.");
+//                return;
+//
+//            /* Doom of Mokhaiotl */
+//            case "doom-4":
+//            case "doom-l4":
+//                onGameMessage(newPersonalBest
+//                    ? "Delve level: 4 duration: 1:53 (new personal best)"
+//                    : "Delve level: 4 duration: 2:34. Personal best: 1:54");
+//                return;
+//            case "doom1-8":
+//            case "doom-all":
+//                onGameMessage(newPersonalBest
+//                    ? "Delve level 1 - 8 duration: 9:33 (new personal best)"
+//                    : "Delve level 1 - 8 duration: 9:40. Personal best: 9:33");
+//                onGameMessage("Deep delves completed: 2");
+//                return;
+//
+//            default:
+//                return;
+//        }
+//    }\
+}
+
+/*
+ * Copyright (c) 2017. l2-
+ * Copyright (c) 2017, Adam <Adam@sigterm.info>
+ * All rights reserved.
+ *
+ * Borrowed from ChatCommandsPlugin and modified for use within the
+ * DropTracker by @joelhalen <andy@joelhalen.net>
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ *    list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */

@@ -1,0 +1,132 @@
+package net.runelite.client.plugins.pluginhub.com.collectionlogmaster.ui.component;
+
+import net.runelite.client.plugins.pluginhub.com.collectionlogmaster.CollectionLogMasterPlugin;
+import net.runelite.client.plugins.pluginhub.com.collectionlogmaster.domain.Task;
+import net.runelite.client.plugins.pluginhub.com.collectionlogmaster.task.TaskService;
+import net.runelite.client.plugins.pluginhub.com.collectionlogmaster.ui.generic.BorderTheme;
+import net.runelite.client.plugins.pluginhub.com.collectionlogmaster.ui.generic.UIComponent;
+import net.runelite.client.plugins.pluginhub.com.collectionlogmaster.ui.generic.UIGridContainer;
+import net.runelite.client.plugins.pluginhub.com.collectionlogmaster.ui.generic.UIScrollableContainer;
+import com.google.inject.Inject;
+import java.util.ArrayList;
+import java.util.List;
+import lombok.NonNull;
+import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.gameval.SpriteID;
+import net.runelite.api.widgets.Widget;
+import net.runelite.api.widgets.WidgetSizeMode;
+import net.runelite.api.widgets.WidgetType;
+
+
+@Slf4j
+public class TaskList extends UIComponent<TaskList> {
+	public static final int TASK_COMPONENT_WIDTH = 300;
+	public static final int TASK_COMPONENT_HEIGHT = 50;
+	public static final int TASK_COMPONENT_PADDING = 5;
+
+	@Inject
+	private TaskService taskService;
+
+	private final Widget background;
+	private final UIScrollableContainer scrollableContainer;
+	private final UIGridContainer taskGrid;
+
+	private final List<@NonNull Task> tasks;
+
+	private final List<TaskComponent> taskComponents = new ArrayList<>();
+
+	public static TaskList createInside(Widget window, List<@NonNull Task> tasks) {
+		return new TaskList(window.createChild(WidgetType.LAYER), tasks);
+	}
+
+	private TaskList(Widget widget, List<@NonNull Task> tasks) {
+		super(widget, WidgetType.LAYER);
+		CollectionLogMasterPlugin.getStaticInjector().injectMembers(this);
+
+		this.tasks = tasks;
+
+		background = widget.createChild(WidgetType.GRAPHIC);
+		scrollableContainer = UIScrollableContainer.createInside(widget);
+		taskGrid = new UIGridContainer(scrollableContainer.getContent());
+
+		initializeWidgets();
+	}
+
+	private void initializeWidgets() {
+		widget.setWidthMode(WidgetSizeMode.MINUS)
+			.setHeightMode(WidgetSizeMode.MINUS)
+			.setSize(0, 0)
+			.revalidate();
+
+		background.setPos(0, 0)
+			.setWidthMode(WidgetSizeMode.MINUS)
+			.setHeightMode(WidgetSizeMode.MINUS)
+			.setSize(0, 0)
+			.setSpriteId(SpriteID.TRADEBACKING)
+			.setSpriteTiling(true)
+			.revalidate();
+
+		scrollableContainer.setPos(0, 0)
+			.setWidthMode(WidgetSizeMode.MINUS)
+			.setHeightMode(WidgetSizeMode.MINUS)
+			.setSize(0, 0)
+			.setDrawScrollbar(true)
+			.revalidate();
+
+		taskGrid.setPos(0, 0)
+			.setWidthMode(WidgetSizeMode.MINUS)
+			.setOriginalWidth(0)
+			.revalidate();
+
+		for (Task task : tasks) {
+			TaskComponent taskComponent = new TaskComponent(taskGrid.createItem(WidgetType.LAYER))
+				.setPaddingSize(TASK_COMPONENT_PADDING)
+				.setSize(TASK_COMPONENT_WIDTH, TASK_COMPONENT_HEIGHT)
+				.setTask(task);
+
+			taskComponent.revalidate();
+			taskComponents.add(taskComponent);
+		}
+
+		taskGrid.revalidate();
+	}
+
+	@Override
+	public void revalidate() {
+		super.revalidate();
+		scrollableContainer.revalidate();
+		taskGrid.revalidate();
+
+		Task activeTask = taskService.getActiveTask();
+		for (TaskComponent taskComponent : taskComponents) {
+			Task task = taskComponent.getTask();
+
+			boolean isActive = task.equals(activeTask);
+			if (isActive) {
+				taskComponent.setOpacity(0)
+					.setTheme(BorderTheme.ETCHED_GOLD_DYED)
+					.revalidate();
+
+				continue;
+			}
+
+			boolean isComplete = taskService.isComplete(task.getId());
+			if (isComplete) {
+				taskComponent.setOpacity(0)
+					.setTheme(BorderTheme.ETCHED_GREEN_DYED)
+					.revalidate();
+
+				continue;
+			}
+
+			taskComponent.setOpacity(125)
+				.setTheme(BorderTheme.ETCHED)
+				.revalidate();
+		}
+	}
+
+	@Override
+	public void unregister() {
+		scrollableContainer.unregister();
+	}
+}

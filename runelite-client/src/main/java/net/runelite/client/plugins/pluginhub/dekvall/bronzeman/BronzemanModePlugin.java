@@ -1,0 +1,290 @@
+package net.runelite.client.plugins.pluginhub.dekvall.bronzeman;
+
+import com.google.common.base.Strings;
+import com.google.common.collect.Sets;
+import com.google.gson.reflect.TypeToken;
+import com.google.inject.Provides;
+import java.awt.image.BufferedImage;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
+import javax.inject.Inject;
+import lombok.AccessLevel;
+import lombok.Getter;
+import net.runelite.api.ChatMessageType;
+import net.runelite.api.Client;
+import net.runelite.api.GameState;
+import net.runelite.api.InventoryID;
+import net.runelite.api.Item;
+import net.runelite.api.ItemID;
+import net.runelite.api.MessageNode;
+import net.runelite.api.events.ChatMessage;
+import net.runelite.api.events.GameStateChanged;
+import net.runelite.api.events.GameTick;
+import net.runelite.api.events.ItemContainerChanged;
+import net.runelite.api.events.ScriptPostFired;
+import net.runelite.api.widgets.Widget;
+import net.runelite.client.Notifier;
+import net.runelite.client.chat.ChatColorType;
+import net.runelite.client.chat.ChatCommandManager;
+import net.runelite.client.chat.ChatMessageBuilder;
+import net.runelite.client.chat.ChatMessageManager;
+import net.runelite.client.chat.QueuedMessage;
+import net.runelite.client.config.ConfigManager;
+import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.game.ItemManager;
+import net.runelite.client.plugins.Plugin;
+import net.runelite.client.plugins.PluginDescriptor;
+import lombok.extern.slf4j.Slf4j;
+import net.runelite.client.ui.overlay.OverlayManager;
+import static net.runelite.http.api.RuneLiteAPI.GSON;
+
+@Slf4j
+@PluginDescriptor(
+	name = "Bronzeman Mode",
+	description = "Unlock items as you acquire them (by dekvall)"
+)
+public class BronzemanModePlugin extends Plugin
+{
+	static final String CONFIG_GROUP = "bronzemanmode";
+	public static final String CONFIG_KEY = "unlockeditems";
+	private static final int AMOUNT_OF_TICKS_TO_SHOW_OVERLAY = 8;
+	private static final int GE_SEARCH_BUILD_SCRIPT = 751;
+
+	private static final String UNLOCKED_ITEMS_STRING = "!bronzemanunlocks";
+
+	@Inject
+	private OverlayManager overlayManager;
+
+	@Inject
+	private Client client;
+
+	@Inject
+	private Notifier notifier;
+
+	@Inject
+	private BronzemanModeConfig config;
+
+	@Inject
+	private BronzemanModeOverlay overlay;
+
+	@Inject
+	private ConfigManager configManager;
+
+	@Inject
+	private ChatMessageManager chatMessageManager;
+
+	@Inject
+	private ChatCommandManager chatCommandManager;
+
+	@Inject
+	ItemManager itemManager;
+
+	private final Set<Integer> unlockedItems = Sets.newHashSet();
+	@Getter(AccessLevel.PACKAGE)
+	private List<BufferedImage> recentUnlockedImages;
+	@Getter(AccessLevel.PACKAGE)
+	private boolean itemsRecentlyUnlocked;
+	private int ticksToLastUnlock;
+
+	@Provides
+	BronzemanModeConfig provideConfig(ConfigManager configManager)
+	{
+		return configManager.getConfig(BronzemanModeConfig.class);
+	}
+
+	@Override
+	protected void startUp() throws Exception
+	{
+		overlayManager.add(overlay);
+		chatCommandManager.registerCommand(UNLOCKED_ITEMS_STRING, this::unlockedItemsLookup);
+		if (client.getGameState() == GameState.LOGGED_IN)
+		{
+			loadUnlockedItems();
+			unlockBond();
+		}
+
+		log.info("Bronzeman Mode started!");
+	}
+
+	@Override
+	protected void shutDown() throws Exception
+	{
+		overlayManager.remove(overlay);
+		chatCommandManager.unregisterCommand(UNLOCKED_ITEMS_STRING);
+		unlockedItems.clear();
+		log.info("Bronzeman Mode stopped!");
+	}
+
+	@Subscribe
+	public void onGameStateChanged(GameStateChanged gameStateChanged)
+	{
+		if (gameStateChanged.getGameState() == GameState.LOGGED_IN)
+		{
+			loadUnlockedItems();
+		}
+	}
+
+	@Subscribe
+	public void onItemContainerChanged(ItemContainerChanged event)
+	{
+		if (event.getItemContainer() != client.getItemContainer(InventoryID.INVENTORY))
+		{
+			return;
+		}
+
+		Set<Integer> recentUnlocks = Arrays.stream(client.getItemContainer(InventoryID.INVENTORY).getItems())
+			.map(Item::getId)
+			.map(itemManager::canonicalize)
+			.filter(id -> id != -1
+				&& client.getItemDefinition(id).isTradeable()
+				&& !unlockedItems.contains(id))
+			.collect(Collectors.toSet());
+
+		if (recentUnlocks.isEmpty())
+		{
+			return;
+		}
+
+		log.info("Unlocked {} item(s), the id(s) were {}", recentUnlocks.size(), recentUnlocks);
+		unlockedItems.addAll(recentUnlocks);
+		recentUnlockedImages = recentUnlocks.stream().map(itemManager::getImage).collect(Collectors.toList());
+		ticksToLastUnlock = 0;
+		itemsRecentlyUnlocked = true;
+		saveUnlockedItems();
+
+		if (config.sendNotification())
+		{
+			notifier.notify("New bronzeman unlock!");
+		}
+
+		if (config.sendChatMessage())
+		{
+			for (int id : recentUnlocks)
+			{
+				sendChatMessage("You have unlocked a new item: " + client.getItemDefinition(id).getName() + ".");
+			}
+		}
+	}
+
+	private void saveUnlockedItems()
+	{
+		String key = client.getUsername() + "." + CONFIG_KEY;
+
+		if (unlockedItems == null || unlockedItems.isEmpty())
+		{
+			configManager.unsetConfiguration(CONFIG_GROUP, key);
+			return;
+		}
+
+		String json = GSON.toJson(unlockedItems);
+		configManager.setConfiguration(CONFIG_GROUP, key, json);
+	}
+
+	private void loadUnlockedItems()
+	{
+		String key = client.getUsername() + "." + CONFIG_KEY;
+
+		String json = configManager.getConfiguration(CONFIG_GROUP, key);
+		unlockedItems.clear();
+
+		if (!Strings.isNullOrEmpty(json))
+		{
+			// CHECKSTYLE:OFF
+			unlockedItems.addAll(GSON.fromJson(json, new TypeToken<List<Integer>>(){}.getType()));
+			// CHECKSTYLE:ON
+		}
+	}
+
+	private void unlockBond()
+	{
+		unlockedItems.add(ItemID.OLD_SCHOOL_BOND);
+	}
+
+
+
+	@Subscribe
+	public void onGameTick(GameTick event)
+	{
+		if (ticksToLastUnlock > AMOUNT_OF_TICKS_TO_SHOW_OVERLAY)
+		{
+			itemsRecentlyUnlocked = false;
+		}
+		ticksToLastUnlock += 1;
+	}
+
+	@Subscribe
+	public void onScriptPostFired(ScriptPostFired event)
+	{
+		if (event.getScriptId() == GE_SEARCH_BUILD_SCRIPT)
+		{
+			killSearchResults();
+		}
+	}
+
+	void killSearchResults()
+	{
+		Widget grandExchangeSearchResults = client.getWidget(162, 53);
+
+		if (grandExchangeSearchResults == null)
+		{
+			return;
+		}
+
+		Widget[] children = grandExchangeSearchResults.getDynamicChildren();
+
+		if (children == null || children.length < 2)
+		{
+			return;
+		}
+
+		for (int i = 0; i < children.length; i+= 3) {
+			if (!unlockedItems.contains(children[i + 2].getItemId()))
+			{
+				children[i].setHidden(true);
+				children[i + 1].setOpacity(170);
+				children[i + 2].setOpacity(170);
+			}
+		}
+	}
+
+	private void sendChatMessage(String chatMessage)
+	{
+		final String message = new ChatMessageBuilder()
+			.append(ChatColorType.HIGHLIGHT)
+			.append(chatMessage)
+			.build();
+
+		chatMessageManager.queue(
+			QueuedMessage.builder()
+				.type(ChatMessageType.CONSOLE)
+				.runeLiteFormattedMessage(message)
+				.build());
+	}
+
+	private void unlockedItemsLookup(ChatMessage chatMessage, String message)
+	{
+		MessageNode messageNode = chatMessage.getMessageNode();
+
+		if (!messageNode.getName().equals(client.getLocalPlayer().getName()))
+		{
+			return;
+		}
+
+		final ChatMessageBuilder builder = new ChatMessageBuilder()
+			.append(ChatColorType.HIGHLIGHT)
+			.append("You have unlocked ")
+			.append(ChatColorType.NORMAL)
+			.append(Integer.toString(unlockedItems.size()))
+			.append(ChatColorType.HIGHLIGHT)
+			.append(" items.");
+
+		String response = builder.build();
+
+		messageNode.setRuneLiteFormatMessage(response);
+		chatMessageManager.update(messageNode);
+		client.refreshChat();
+	}
+}
+
